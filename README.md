@@ -1,5 +1,31 @@
 # ARR Stack -- Docker Compose Setup
 
+```{=html}
+<p align="center">
+```
+`<a href="https://github.com/clickbang101/arr-stack">`{=html}
+`<img src="https://img.shields.io/badge/Repo-ARR%20Stack-blue?style=for-the-badge" />`{=html}
+`</a>`{=html}
+
+`<a href="https://github.com/clickbang101/arr-stack/blob/main/LICENSE">`{=html}
+`<img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" />`{=html}
+`</a>`{=html}
+
+`<img src="https://img.shields.io/badge/Docker-Ready-blue?style=for-the-badge" />`{=html}
+
+`<img src="https://img.shields.io/badge/Maintained-Yes-brightgreen?style=for-the-badge" />`{=html}
+
+`<a href="https://github.com/clickbang101/arr-stack/stargazers">`{=html}
+`<img src="https://img.shields.io/github/stars/clickbang101/arr-stack?style=for-the-badge" />`{=html}
+`</a>`{=html}
+
+`<a href="https://github.com/clickbang101/arr-stack/issues">`{=html}
+`<img src="https://img.shields.io/github/issues/clickbang101/arr-stack?style=for-the-badge" />`{=html}
+`</a>`{=html}
+
+```{=html}
+</p>
+```
 A complete media automation stack powered by Docker Compose ---
 including Plex, Sonarr, Radarr, qBittorrent, Prowlarr, Bazarr,
 Overseerr, Jackett, FlareSolverr, and LazyLibrarian.
@@ -83,7 +109,7 @@ Paste your exact working compose file here:
 
 2.  Clone the repo:
 
-        git clone https://github.com/yourusername/arr-stack.git
+        git clone https://github.com/clickbang101/arr-stack.git
         cd arr-stack
 
 3.  Start the stack:
