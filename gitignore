@@ -1,0 +1,26 @@
+# Docker-related
+docker-compose.override.yml
+.env
+.env.*
+*.env
+
+# Logs
+*.log
+log/
+logs/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+
+# Python cache (if you ever add helper scripts)
+__pycache__/
+*.pyc
+
+# Node modules (just in case)
+node_modules/
+
+# Backup files
+*.bak
+*.swp
+*.tmp
