@@ -21,6 +21,19 @@ A complete media automation stack powered by Docker Compose — including **Plex
 
 ---
 
+## 📚 Table of Contents
+
+- [Features](#-features)
+- [Included Services](#-included-services)
+- [Folder Structure](#-folder-structure)
+- [Docker Compose File](#-docker-compose-file)
+- [Default Ports](#-default-ports)
+- [Deployment](#-deployment)
+- [License](#-license)
+- [Support](#-support)
+
+---
+
 ## 🚀 Features
 
 - Fully containerized media ecosystem  
