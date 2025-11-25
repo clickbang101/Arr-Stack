@@ -1,4 +1,4 @@
-# ARR Stack — Docker Compose Setup
+# ARR Stack — Complete Docker Compose Media Automation Setup
 
 <p align="center">
   <a href="https://github.com/clickbang101/arr-stack">
@@ -22,20 +22,75 @@ A complete media automation stack powered by Docker Compose — including **Plex
 ---
 
 ## 📚 Table of Contents
-- [Architecture Diagram](#architecture-diagram)
+- [Prerequisites](#-prerequisites)
+- [Hardware Recommendations](#-hardware-recommendations)
+- [Permissions & Ownership](#-permissions--ownership)
+- [Architecture Diagram](#-architecture-diagram)
 - [Features](#-features)
 - [Included Services](#-included-services)
 - [Folder Structure](#-folder-structure)
 - [Docker Compose File](#-docker-compose-file)
 - [Default Ports](#-default-ports)
+- [Auto Updates (Watchtower)](#-auto-update-containers-watchtower)
+- [Reverse Proxy Examples](#-reverse-proxy-example-nginx-proxy-manager)
+- [Troubleshooting](#-troubleshooting)
+- [FAQ](#-faq)
 - [Deployment](#-deployment)
 - [License](#-license)
 - [Support](#-support)
 
 ---
 
-## 🗺 Architecture Diagram
+## 🧰 Prerequisites
 
+Before deploying this stack, ensure the following:
+
+- Linux host (Ubuntu, Debian, or similar)
+- Docker installed  
+- Docker Compose installed  
+- At least **4 GB RAM** recommended  
+- SSD recommended for Plex metadata  
+- User with correct PUID/PGID:
+
+```bash
+id $USER
+```
+
+---
+
+## 🖥 Hardware Recommendations
+
+| Component | Recommended |
+|----------|-------------|
+| CPU      | Quad-core or better |
+| RAM      | 4–8 GB minimum |
+| SSD      | For appdata |
+| HDD      | For media library |
+| Network  | Gigabit LAN |
+
+Plex transcoding benefits from GPU hardware acceleration (QuickSync / NVENC).
+
+---
+
+## 🔐 Permissions & Ownership
+
+All containers use:
+
+```
+PUID=1000
+PGID=1000
+```
+
+Fix permissions if needed:
+
+```bash
+sudo chown -R $USER:$USER /home/supervisor/appdata
+sudo chown -R $USER:$USER /home/supervisor/share
+```
+
+---
+
+## 🗺 Architecture Diagram
 
 ```mermaid
 flowchart LR
@@ -63,33 +118,34 @@ flowchart LR
     Plex --> Media[(Media Library)]
 ```
 
-
 ---
 
 ## 🚀 Features
 
-- Fully containerized media ecosystem  
+- Fully containerized media automation  
 - Persistent storage mapping  
-- Easy updates using LinuxServer.io images  
+- Easy LinuxServer.io updates  
 - Clean folder structure  
-- Automatic downloading, sorting & metadata enrichment  
+- Automated downloading / renaming / sorting  
+- Cloudflare bypass via FlareSolverr  
+- Overseerr request management  
 
 ---
 
 ## 📦 Included Services
 
-| Service        | Purpose                           |
-|----------------|-----------------------------------|
-| **Plex**       | Media server for movies & TV      |
-| **qBittorrent**| Torrent client with Web UI        |
-| **Sonarr**     | TV automation                     |
-| **Radarr**     | Movie automation                  |
-| **Prowlarr**   | Indexer manager                   |
-| **Bazarr**     | Subtitle manager                  |
-| **Overseerr**  | Request manager for Plex          |
-| **Jackett**    | Extra indexer support             |
-| **FlareSolverr** | Cloudflare bypass helper       |
-| **LazyLibrarian** | Ebook & audiobook automation  |
+| Service | Purpose |
+|--------|---------|
+| **Plex** | Media server |
+| **qBittorrent** | Torrent client |
+| **Sonarr** | TV shows automation |
+| **Radarr** | Movies automation |
+| **Prowlarr** | Indexer management |
+| **Jackett** | Additional indexers |
+| **FlareSolverr** | Cloudflare bypass |
+| **Bazarr** | Subtitles |
+| **Overseerr** | Media request system |
+| **LazyLibrarian** | Books & audiobooks |
 
 ---
 
@@ -117,188 +173,95 @@ flowchart LR
 ## 🧩 Docker Compose File
 
 ```yaml
-version: "3.8"
-
-services:
-  plex:
-    image: lscr.io/linuxserver/plex
-    container_name: plex
-    network_mode: host 
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - VERSION=docker
-      - TZ=Africa/Johannesburg
-    volumes:
-      - /home/supervisor/share/media:/media
-      - /home/supervisor/appdata/plex:/config
-    ports:
-      - 32400:32400
-    restart: unless-stopped
-
-  qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent
-    container_name: qbittorrent
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
-      - WEBUI_PORT=8080
-    volumes:
-      - /home/supervisor/share/downloads:/downloads
-      - /home/supervisor/appdata/qbittorrent:/config
-    ports:
-      - 8080:8080
-      - 6881:6881
-      - 6881:6881/udp
-    restart: unless-stopped
-
-  sonarr:
-    image: linuxserver/sonarr
-    container_name: sonarr
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
-    volumes:
-      - /home/supervisor/share/downloads:/downloads
-      - /home/supervisor/share/media:/media
-      - /home/supervisor/appdata/sonarr:/config
-    ports:
-      - 8989:8989
-    restart: unless-stopped
-
-  radarr:
-    image: linuxserver/radarr
-    container_name: radarr
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
-    volumes:
-      - /home/supervisor/share/downloads:/downloads
-      - /home/supervisor/share/media:/media
-      - /home/supervisor/appdata/radarr:/config
-    ports:
-      - 7878:7878
-    restart: unless-stopped
-
-  prowlarr:
-    image: lscr.io/linuxserver/prowlarr
-    container_name: prowlarr
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
-    volumes:
-      - /home/supervisor/appdata/prowlarr:/config
-    ports:
-      - 9696:9696
-    restart: unless-stopped
-
-  bazarr:
-    image: linuxserver/bazarr
-    container_name: bazarr
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
-    volumes:
-      - /home/supervisor/share/media:/media
-      - /home/supervisor/appdata/bazarr:/config
-    ports:
-      - 6767:6767
-    restart: unless-stopped
-
-  overseerr:
-    image: sctx/overseerr:latest
-    container_name: overseerr
-    environment:
-      - LOG_LEVEL=info
-      - TZ=Africa/Johannesburg
-    ports:
-      - 5055:5055
-    volumes:
-      - /home/supervisor/appdata/overseerr:/app/config
-    restart: unless-stopped
-
-  jackett:
-    image: lscr.io/linuxserver/jackett
-    container_name: jackett
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
-    volumes:
-      - /home/supervisor/appdata/jackett:/config
-      - /home/supervisor/downloads:/downloads
-    ports:
-      - 9117:9117
-    restart: unless-stopped
-
-  flaresolverr:
-    image: flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
-    ports:
-      - 8191:8191
-    environment:
-      - LOG_LEVEL=info
-    platform: linux/amd64
-    restart: unless-stopped
-
-  lazylibrarian:
-    image: linuxserver/lazylibrarian
-    container_name: lazylibrarian
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
-    volumes:
-      - /home/supervisor/share/downloads:/downloads
-      - /home/supervisor/share/media:/books
-      - /home/supervisor/appdata/lazylibrarian:/config
-    ports:
-      - 5299:5299
-    restart: unless-stopped
-
+<INSERT YOUR docker-compose.yml HERE>
 ```
 
 ---
 
 ## 🌍 Default Ports
 
-| App            | Port |
-|----------------|------|
-| Plex           | 32400 |
-| qBittorrent    | 8080  |
-| Sonarr         | 8989  |
-| Radarr         | 7878  |
-| Prowlarr       | 9696  |
-| Bazarr         | 6767  |
-| Overseerr      | 5055  |
-| Jackett        | 9117  |
-| FlareSolverr   | 8191  |
-| LazyLibrarian  | 5299  |
+| App | Port |
+|-----|------|
+| Plex | 32400 |
+| qBittorrent | 8080 |
+| Sonarr | 8989 |
+| Radarr | 7878 |
+| Prowlarr | 9696 |
+| Bazarr | 6767 |
+| Overseerr | 5055 |
+| Jackett | 9117 |
+| FlareSolverr | 8191 |
+| LazyLibrarian | 5299 |
+
+---
+
+## 🔄 Auto Update Containers (Watchtower)
+
+```yaml
+watchtower:
+  image: containrrr/watchtower
+  container_name: watchtower
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+  command: --cleanup --schedule "0 4 * * *"
+```
+
+---
+
+## 🌐 Reverse Proxy Example (Nginx Proxy Manager)
+
+| App | Port | Notes |
+|-----|------|-------|
+| Plex | 32400 | Use http://host.docker.internal:32400 |
+| Sonarr | 8989 | Works normally |
+| Radarr | 7878 | Same as Sonarr |
+| Overseerr | 5055 | Great for public users |
+| qBittorrent | 8080 | Do **NOT** expose publicly |
+
+Use Let's Encrypt SSL certificates.
+
+---
+
+## 🐛 Troubleshooting
+
+### Plex can't see media
+- Check folder mapping  
+- Correct permissions  
+
+### qBittorrent port closed
+- Ensure router/firewall forwards 6881 TCP/UDP  
+
+### Sonarr/Radarr not importing
+- Permissions issue or wrong folder path  
+
+### Indexers failing
+- Use Jackett + FlareSolverr when behind Cloudflare  
+
+---
+
+## ❓ FAQ
+
+### Do I need a VPN for torrents?
+Recommended but optional.
+
+### Can Plex transcode?
+Yes — CPU/GPU dependent.
+
+### Can this run on a NAS?
+Yes — Unraid, TrueNAS, Synology.
 
 ---
 
 ## 🛠 Deployment
 
-1. Install Docker + Docker Compose  
-2. Clone the repository:
-
 ```bash
 git clone https://github.com/clickbang101/arr-stack.git
 cd arr-stack
-```
-
-3. Start the stack:
-
-```bash
 docker compose up -d
 ```
 
-4. View logs:
+View logs:
 
 ```bash
 docker compose logs -f
@@ -308,10 +271,11 @@ docker compose logs -f
 
 ## 📝 License
 
-This project is licensed under the **MIT License**.
+MIT License.
 
 ---
 
 ## 🤝 Support
 
-Feel free to open issues or suggestions to improve the stack!
+Open an issue anytime.
+
