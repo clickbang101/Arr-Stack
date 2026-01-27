@@ -1,9 +1,13 @@
+# ARR Stack - Complete Media Automation
+# Configure via .env file before deploying
+# See README.md for setup instructions
+
 services:
 
   plex:
     image: lscr.io/linuxserver/plex
     container_name: plex
-    network_mode: host 
+    network_mode: host  # Plex requires host network mode for proper functionality
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -12,8 +16,6 @@ services:
     volumes:
       - ${MEDIA_PATH}:/media
       - ${APPDATA_PATH}/plex:/config
-    ports:
-      - ${PLEX_PORT}:32400
     restart: ${RESTART_POLICY}
 
   qbittorrent:

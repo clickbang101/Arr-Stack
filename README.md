@@ -59,6 +59,34 @@ id $USER
 
 ---
 
+## ⚡ Quick Start
+
+```bash
+# 1. Clone and enter directory
+cd Arr-Stack
+
+# 2. Create and edit configuration
+cp .env .env.local
+nano .env.local  # Update paths, timezone, PUID/PGID
+
+# 3. Create required directories
+mkdir -p /path/to/media /path/to/downloads /path/to/appdata/{plex,sonarr,radarr,prowlarr,bazarr,overseerr,jackett,lazylibrarian,qbittorrent}
+
+# 4. Deploy the stack
+docker compose up -d
+
+# 5. Access services (default ports from .env)
+# Plex:        http://localhost:32400
+# Sonarr:      http://localhost:8989
+# Radarr:      http://localhost:7878
+# qBittorrent: http://localhost:8081
+# Prowlarr:    http://localhost:9696
+# Bazarr:      http://localhost:6767
+# Overseerr:   http://localhost:5055
+```
+
+---
+
 ## ⚙️ Configuration
 
 ### Setup Environment Variables
