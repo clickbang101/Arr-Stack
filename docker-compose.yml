@@ -16,6 +16,12 @@ services:
     volumes:
       - ${MEDIA_PATH}:/media
       - ${APPDATA_PATH}/plex:/config
+    healthcheck:
+      test: curl -f http://localhost:32400/identity || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
 
   qbittorrent:
@@ -33,6 +39,12 @@ services:
       - ${QBITTORRENT_PORT}:${QBITTORRENT_PORT}
       - 6881:6881
       - 6881:6881/udp
+    healthcheck:
+      test: curl -f http://localhost:${QBITTORRENT_PORT}/api/v2/app/webapiVersion || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
 
   sonarr:
@@ -48,6 +60,12 @@ services:
       - ${APPDATA_PATH}/sonarr:/config
     ports:
       - ${SONARR_PORT}:8989
+    healthcheck:
+      test: curl -f http://localhost:8989/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
 
   radarr:
@@ -63,6 +81,12 @@ services:
       - ${APPDATA_PATH}/radarr:/config
     ports:
       - ${RADARR_PORT}:7878
+    healthcheck:
+      test: curl -f http://localhost:7878/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
 
   prowlarr:
@@ -76,6 +100,12 @@ services:
       - ${APPDATA_PATH}/prowlarr:/config
     ports:
       - ${PROWLARR_PORT}:9696
+    healthcheck:
+      test: curl -f http://localhost:9696/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
 
   bazarr:
@@ -90,6 +120,12 @@ services:
       - ${APPDATA_PATH}/bazarr:/config
     ports:
       - ${BAZARR_PORT}:6767
+    healthcheck:
+      test: curl -f http://localhost:6767/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
 
   overseerr:
@@ -102,6 +138,12 @@ services:
       - ${OVERSEERR_PORT}:5055
     volumes:
       - ${APPDATA_PATH}/overseerr:/app/config
+    healthcheck:
+      test: curl -f http://localhost:5055/api/v1/settings/main || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: ${RESTART_POLICY}
 
   jackett:
@@ -116,6 +158,12 @@ services:
       - ${DOWNLOADS_PATH}:/downloads
     ports:
       - ${JACKETT_PORT}:9117
+    healthcheck:
+      test: curl -f http://localhost:9117/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
 
 
@@ -127,6 +175,12 @@ services:
     environment:
       - LOG_LEVEL=info
     platform: linux/amd64  # or linux/arm64 if you're on ARM
+    healthcheck:
+      test: curl -f http://localhost:8191/ || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
 
 
@@ -144,4 +198,10 @@ services:
       - ${APPDATA_PATH}/lazylibrarian:/config
     ports:
       - ${LAZYLIBRARIAN_PORT}:5299
+    healthcheck:
+      test: curl -f http://localhost:5299/ || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: ${RESTART_POLICY}
