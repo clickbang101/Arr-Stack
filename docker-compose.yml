@@ -7,127 +7,127 @@ services:
     container_name: plex
     network_mode: host 
     environment:
-      - PUID=1000
-      - PGID=1000
-      - VERSION=docker
-      - TZ=Africa/Johannesburg
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - VERSION=${PLEX_VERSION}
+      - TZ=${TZ}
     volumes:
-      - /home/supervisor/share/media:/media
-      - /home/supervisor/appdata/plex:/config
+      - ${MEDIA_PATH}:/media
+      - ${APPDATA_PATH}/plex:/config
     ports:
-      - 32400:32400
-    restart: unless-stopped
+      - ${PLEX_PORT}:32400
+    restart: ${RESTART_POLICY}
 
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent
     container_name: qbittorrent
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
-      - WEBUI_PORT=8080
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - WEBUI_PORT=${QBITTORRENT_PORT}
     volumes:
-      - /home/supervisor/share/downloads:/downloads
-      - /home/supervisor/appdata/qbittorrent:/config
+      - ${DOWNLOADS_PATH}:/downloads
+      - ${APPDATA_PATH}/qbittorrent:/config
     ports:
-      - 8080:8080
+      - ${QBITTORRENT_PORT}:${QBITTORRENT_PORT}
       - 6881:6881
       - 6881:6881/udp
-    restart: unless-stopped
+    restart: ${RESTART_POLICY}
 
   sonarr:
     image: linuxserver/sonarr
     container_name: sonarr
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
     volumes:
-      - /home/supervisor/share/downloads:/downloads
-      - /home/supervisor/share/media:/media
-      - /home/supervisor/appdata/sonarr:/config
+      - ${DOWNLOADS_PATH}:/downloads
+      - ${MEDIA_PATH}:/media
+      - ${APPDATA_PATH}/sonarr:/config
     ports:
-      - 8989:8989
-    restart: unless-stopped
+      - ${SONARR_PORT}:8989
+    restart: ${RESTART_POLICY}
 
   radarr:
     image: linuxserver/radarr
     container_name: radarr
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
     volumes:
-      - /home/supervisor/share/downloads:/downloads
-      - /home/supervisor/share/media:/media
-      - /home/supervisor/appdata/radarr:/config
+      - ${DOWNLOADS_PATH}:/downloads
+      - ${MEDIA_PATH}:/media
+      - ${APPDATA_PATH}/radarr:/config
     ports:
-      - 7878:7878
-    restart: unless-stopped
+      - ${RADARR_PORT}:7878
+    restart: ${RESTART_POLICY}
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr
     container_name: prowlarr
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
     volumes:
-      - /home/supervisor/appdata/prowlarr:/config
+      - ${APPDATA_PATH}/prowlarr:/config
     ports:
-      - 9696:9696
-    restart: unless-stopped
+      - ${PROWLARR_PORT}:9696
+    restart: ${RESTART_POLICY}
 
   bazarr:
     image: linuxserver/bazarr
     container_name: bazarr
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
     volumes:
-      - /home/supervisor/share/media:/media
-      - /home/supervisor/appdata/bazarr:/config
+      - ${MEDIA_PATH}:/media
+      - ${APPDATA_PATH}/bazarr:/config
     ports:
-      - 6767:6767
-    restart: unless-stopped
+      - ${BAZARR_PORT}:6767
+    restart: ${RESTART_POLICY}
 
   overseerr:
     image: sctx/overseerr:latest
     container_name: overseerr
     environment:
       - LOG_LEVEL=info
-      - TZ=Africa/Johannesburg
+      - TZ=${TZ}
     ports:
-      - 5055:5055
+      - ${OVERSEERR_PORT}:5055
     volumes:
-      - /home/supervisor/appdata/overseerr:/app/config
-    restart: unless-stopped
+      - ${APPDATA_PATH}/overseerr:/app/config
+    restart: ${RESTART_POLICY}
 
   jackett:
     image: lscr.io/linuxserver/jackett
     container_name: jackett
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
     volumes:
-      - /home/supervisor/appdata/jackett:/config
-      - /home/supervisor/downloads:/downloads
+      - ${APPDATA_PATH}/jackett:/config
+      - ${DOWNLOADS_PATH}:/downloads
     ports:
-      - 9117:9117
-    restart: unless-stopped
+      - ${JACKETT_PORT}:9117
+    restart: ${RESTART_POLICY}
 
 
   flaresolverr:
     image: flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     ports:
-      - 8191:8191
+      - ${FLARESOLVERR_PORT}:8191
     environment:
       - LOG_LEVEL=info
     platform: linux/amd64  # or linux/arm64 if you're on ARM
-    restart: unless-stopped
+    restart: ${RESTART_POLICY}
 
 
 
@@ -135,13 +135,13 @@ services:
     image: linuxserver/lazylibrarian
     container_name: lazylibrarian
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Africa/Johannesburg
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
     volumes:
-      - /home/supervisor/share/downloads:/downloads
-      - /home/supervisor/share/media:/books
-      - /home/supervisor/appdata/lazylibrarian:/config
+      - ${DOWNLOADS_PATH}:/downloads
+      - ${MEDIA_PATH}:/books
+      - ${APPDATA_PATH}/lazylibrarian:/config
     ports:
-      - 5299:5299
-    restart: unless-stopped
+      - ${LAZYLIBRARIAN_PORT}:5299
+    restart: ${RESTART_POLICY}

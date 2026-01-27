@@ -23,6 +23,7 @@ A complete media automation stack powered by Docker Compose — including **Plex
 
 ## 📚 Table of Contents
 - [Prerequisites](#-prerequisites)
+- [Configuration](#-configuration)
 - [Hardware Recommendations](#-hardware-recommendations)
 - [Permissions & Ownership](#-permissions--ownership)
 - [Architecture Diagram](#-architecture-diagram)
@@ -55,6 +56,51 @@ Before deploying this stack, ensure the following:
 ```bash
 id $USER
 ```
+
+---
+
+## ⚙️ Configuration
+
+### Setup Environment Variables
+
+1. **Copy the example `.env` file:**
+   ```bash
+   cp .env .env.local
+   ```
+
+2. **Edit `.env.local` with your settings:**
+   ```bash
+   nano .env.local
+   ```
+
+3. **Key variables to customize:**
+
+   | Variable | Default | Description |
+   |----------|---------|-------------|
+   | `PUID` | `1000` | User ID (from `id $USER`) |
+   | `PGID` | `1000` | Group ID (from `id $USER`) |
+   | `TZ` | `Africa/Johannesburg` | Timezone (see [TZ Database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)) |
+   | `MEDIA_PATH` | `/home/supervisor/share/media` | Your media library directory |
+   | `DOWNLOADS_PATH` | `/home/supervisor/share/downloads` | Your downloads directory |
+   | `APPDATA_PATH` | `/home/supervisor/appdata` | Application data directory |
+   | `RESTART_POLICY` | `unless-stopped` | Container restart behavior |
+
+4. **Create the required directories:**
+   ```bash
+   mkdir -p ${MEDIA_PATH} ${DOWNLOADS_PATH} ${APPDATA_PATH}/{plex,sonarr,radarr,prowlarr,bazarr,overseerr,jackett,lazylibrarian,qbittorrent}
+   ```
+
+5. **Fix permissions:**
+   ```bash
+   sudo chown -R $(id -u):$(id -g) ${MEDIA_PATH} ${DOWNLOADS_PATH} ${APPDATA_PATH}
+   ```
+
+6. **Load the configuration:**
+   ```bash
+   docker-compose up -d
+   ```
+
+> **Tip:** The `.env` file is ignored by Git. Create `.env.local` for local overrides while keeping the template `.env` in version control.
 
 ---
 
