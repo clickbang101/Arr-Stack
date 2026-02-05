@@ -149,6 +149,7 @@ services:
   jackett:
     image: lscr.io/linuxserver/jackett
     container_name: jackett
+    profiles: ["extras"]
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -170,6 +171,7 @@ services:
   flaresolverr:
     image: flaresolverr/flaresolverr:latest
     container_name: flaresolverr
+    profiles: ["extras"]
     ports:
       - ${FLARESOLVERR_PORT}:8191
     environment:
@@ -188,6 +190,7 @@ services:
   lazylibrarian:
     image: linuxserver/lazylibrarian
     container_name: lazylibrarian
+    profiles: ["extras"]
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
