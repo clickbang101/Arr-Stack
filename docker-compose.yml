@@ -48,8 +48,11 @@ services:
     restart: ${RESTART_POLICY}
 
   sonarr:
-    image: linuxserver/sonarr
+    image: lscr.io/linuxserver/sonarr
     container_name: sonarr
+    depends_on:
+      qbittorrent:
+        condition: service_healthy
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -69,8 +72,11 @@ services:
     restart: ${RESTART_POLICY}
 
   radarr:
-    image: linuxserver/radarr
+    image: lscr.io/linuxserver/radarr
     container_name: radarr
+    depends_on:
+      qbittorrent:
+        condition: service_healthy
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -109,8 +115,13 @@ services:
     restart: ${RESTART_POLICY}
 
   bazarr:
-    image: linuxserver/bazarr
+    image: lscr.io/linuxserver/bazarr
     container_name: bazarr
+    depends_on:
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -131,6 +142,11 @@ services:
   overseerr:
     image: sctx/overseerr:latest
     container_name: overseerr
+    depends_on:
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
     environment:
       - LOG_LEVEL=info
       - TZ=${TZ}
@@ -185,10 +201,8 @@ services:
       start_period: 40s
     restart: ${RESTART_POLICY}
 
-
-
   lazylibrarian:
-    image: linuxserver/lazylibrarian
+    image: lscr.io/linuxserver/lazylibrarian
     container_name: lazylibrarian
     profiles: ["extras"]
     environment:

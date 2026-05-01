@@ -1,4 +1,4 @@
-# ARR Stack — Complete Docker Compose Media Automation Setup
+# ARR Stack — Automated Media Server
 
 <p align="center">
   <a href="https://github.com/clickbang101/arr-stack">
@@ -12,479 +12,367 @@
   <a href="https://github.com/clickbang101/arr-stack/stargazers">
     <img src="https://img.shields.io/github/stars/clickbang101/arr-stack?style=for-the-badge" />
   </a>
-  <a href="https://github.com/clickbang101/arr-stack/issues">
-    <img src="https://img.shields.io/github/issues/clickbang101/arr-stack?style=for-the-badge" />
-  </a>
 </p>
 
-A complete Docker Compose media automation stack including **Plex, Sonarr, Radarr, qBittorrent, Prowlarr, Bazarr, Overseerr, Jackett, FlareSolverr, and LazyLibrarian**.
+A one-command setup for a self-hosted media server. Automatically finds, downloads, organizes, and streams your TV shows, movies, and books.
+
+**What you get:** Plex · Sonarr · Radarr · qBittorrent · Prowlarr · Bazarr · Overseerr
 
 ---
 
-## 📚 Table of Contents
-- [Prerequisites](#-prerequisites)
-- [Configuration](#-configuration)
-- [Hardware Recommendations](#-hardware-recommendations)
-- [Permissions & Ownership](#-permissions--ownership)
-- [Architecture Diagram](#-architecture-diagram)
-- [Features](#-features)
-- [Included Services](#-included-services)
-- [Folder Structure](#-folder-structure)
-- [Docker Compose File](#-docker-compose-file)
-- [Default Ports](#-default-ports)
-- [Auto Updates (Watchtower)](#-auto-update-containers-watchtower)
-- [Reverse Proxy Examples](#-reverse-proxy-example-nginx-proxy-manager)
-- [Troubleshooting](#-troubleshooting)
-- [FAQ](#-faq)
-- [Deployment](#-deployment)
-- [License](#-license)
-- [Support](#-support)
+## Setup
+
+Choose your method:
+
+- [Command line (recommended)](#command-line-setup)
+- [Portainer](#portainer-setup)
 
 ---
 
-## 🧰 Prerequisites
+## Command line setup
 
-Before deploying this stack, ensure the following:
+**1. Install Docker**
 
-Docker Compose lets you define and run multi-container apps with a single `docker compose` command.
-
-- Linux host (Ubuntu, Debian, or similar)
-- Docker installed  
-- Docker Compose installed  
-- At least **4 GB RAM** recommended  
-- SSD recommended for Plex metadata  
-- User with correct PUID/PGID:
+If you don't have Docker yet:
 
 ```bash
-id $USER
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+# Log out and back in after this
 ```
 
-Verify Docker is working:
-
-```bash
-docker --version
-docker compose version
-```
-
----
-
-## ⚡ Quick Start
-
-```bash
-# 1. Clone and enter directory
-cd Arr-Stack
-
-# 2. Create and edit configuration
-cp .env .env.local
-nano .env.local  # Update paths, timezone, PUID/PGID
-
-# 3. Create required directories
-mkdir -p /data/media /data/downloads /data/appdata/{plex,sonarr,radarr,prowlarr,bazarr,overseerr,jackett,lazylibrarian,qbittorrent}
-
-# 4. Deploy the stack
-docker compose --env-file .env.local up -d
-
-# 4b. Deploy optional services too (Jackett, FlareSolverr, LazyLibrarian)
-docker compose --env-file .env.local --profile extras up -d
-
-# 5. Smoke test (open a couple UIs to confirm)
-# Plex:        http://localhost:32400
-# Sonarr:      http://localhost:8989
-# Radarr:      http://localhost:7878
-# qBittorrent: http://localhost:8081
-# Prowlarr:    http://localhost:9696
-# Bazarr:      http://localhost:6767
-# Overseerr:   http://localhost:5055
-```
-
----
-
-## ✅ First-Run Checklist
-
-- Set `PUID`, `PGID`, and `TZ` to match your host
-- Update `MEDIA_PATH`, `DOWNLOADS_PATH`, and `APPDATA_PATH`
-- Create the required directories
-- Start the stack and confirm each UI loads
-- Wire Sonarr/Radarr to qBittorrent and Prowlarr
-
----
-
-## ⚙️ Configuration
-
-### Setup Environment Variables
-
-1. **Copy the example `.env` file:**
-   ```bash
-   cp .env .env.local
-   ```
-
-   The tracked `.env` file is a template only — keep real values in `.env.local`.
-
-2. **Edit `.env.local` with your settings:**
-   ```bash
-   nano .env.local
-   ```
-
-3. **Key variables to customize:**
-
-   | Variable | Default | Description |
-   |----------|---------|-------------|
-   | `PUID` | `1000` | User ID (from `id $USER`) |
-   | `PGID` | `1000` | Group ID (from `id $USER`) |
-| `TZ` | `Africa/Johannesburg` | Timezone (see [TZ Database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)) |
-| `MEDIA_PATH` | `/data/media` | Your media library directory |
-| `DOWNLOADS_PATH` | `/data/downloads` | Your downloads directory |
-| `APPDATA_PATH` | `/data/appdata` | Application data directory |
-   | `RESTART_POLICY` | `unless-stopped` | Container restart behavior |
-
-4. **Create the required directories:**
-   ```bash
-   mkdir -p ${MEDIA_PATH} ${DOWNLOADS_PATH} ${APPDATA_PATH}/{plex,sonarr,radarr,prowlarr,bazarr,overseerr,jackett,lazylibrarian,qbittorrent}
-   ```
-
-5. **Fix permissions:**
-   ```bash
-   sudo chown -R $(id -u):$(id -g) ${MEDIA_PATH} ${DOWNLOADS_PATH} ${APPDATA_PATH}
-   ```
-
-6. **Load the configuration:**
-   ```bash
-   docker compose --env-file .env.local up -d
-   ```
-
-> **Tip:** This repo tracks `.env` as a template. Keep real values in `.env.local` and pass it explicitly with `--env-file`. `/data` is just a convention — any path works.
-
----
-
-## 🖥 Hardware Recommendations
-
-| Component | Recommended |
-|----------|-------------|
-| CPU      | Quad-core or better |
-| RAM      | 4–8 GB minimum |
-| SSD      | For appdata |
-| HDD      | For media library |
-| Network  | Gigabit LAN |
-
-Plex transcoding benefits from GPU acceleration (QuickSync / NVENC).
-
----
-
-## 🔐 Permissions & Ownership
-
-All containers use:
-
-```
-PUID=1000
-PGID=1000
-```
-
-Fix permissions if needed:
-
-```bash
-   sudo chown -R $USER:$USER /data/appdata
-   sudo chown -R $USER:$USER /data
-```
-
----
-
-## 🗺 Architecture Diagram
-
-```mermaid
-flowchart LR
-    subgraph Downloaders
-        QB[qBittorrent] --> DL[Downloads Folder]
-    end
-
-    subgraph Indexers
-        Prowlarr -->|Sync| Sonarr
-        Prowlarr -->|Sync| Radarr
-        Jackett --> Sonarr
-        Jackett --> Radarr
-        FlareSolverr --> Jackett
-    end
-
-    Sonarr --> QB
-    Radarr --> QB
-    Sonarr --> Media
-    Radarr --> Media
-
-    Bazarr --> Media
-    Overseerr --> Sonarr
-    Overseerr --> Radarr
-
-    Plex --> Media[(Media Library)]
-```
-
----
-
-## 🚀 Features
-
-- Fully containerized media automation  
-- Persistent storage mapping  
-- Easy LinuxServer.io updates  
-- Clean folder structure  
-- Automated downloading / renaming / sorting  
-- Cloudflare bypass via FlareSolverr  
-- Overseerr request management  
-
----
-
-## 📦 Included Services
-
-| Service | Purpose |
-|--------|---------|
-| **Plex** | Media server |
-| **qBittorrent** | Torrent client |
-| **Sonarr** | TV shows automation |
-| **Radarr** | Movies automation |
-| **Prowlarr** | Indexer management |
-| **Jackett** | Additional indexers |
-| **FlareSolverr** | Cloudflare bypass |
-| **Bazarr** | Subtitles |
-| **Overseerr** | Media request system |
-| **LazyLibrarian** | Books & audiobooks |
-
----
-
-## 🧩 Optional Services (Profiles)
-
-Some services are marked as optional and use Docker Compose profiles. To include them, run:
-
-```bash
-docker compose --env-file .env.local --profile extras up -d
-```
-
-Included in `extras`:
-- Jackett
-- FlareSolverr
-- LazyLibrarian
-
-### Profiles FAQ
-
-Optional services start only when you pass `--profile extras`.
-
----
-
-## 📁 Folder Structure
-
-```
-/data/
-├── appdata/
-│   ├── plex
-│   ├── qbittorrent
-│   ├── sonarr
-│   ├── radarr
-│   ├── prowlarr
-│   ├── bazarr
-│   ├── overseerr
-│   ├── jackett
-│   └── lazylibrarian
-├── media
-└── downloads
-```
-
----
-
-## 🧩 Docker Compose File
-
-```yaml
-<INSERT YOUR docker-compose.yml HERE>
-```
-
----
-
-## 🌍 Default Ports
-
-| App | Port |
-|-----|------|
-| Plex | 32400 |
-| qBittorrent | 8081 |
-| Sonarr | 8989 |
-| Radarr | 7878 |
-| Prowlarr | 9696 |
-| Bazarr | 6767 |
-| Overseerr | 5055 |
-| Jackett | 9117 |
-| FlareSolverr | 8191 |
-| LazyLibrarian | 8299 |
-
----
-
-## 🧰 Convenience Commands
-
-If you prefer short commands, use the included `Makefile`:
-
-```bash
-make up
-make down
-make logs
-make pull
-make ps
-```
-
----
-
-## 🔄 Auto Update Containers (Watchtower)
-
-```yaml
-watchtower:
-  image: containrrr/watchtower
-  container_name: watchtower
-  restart: unless-stopped
-  volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
-  command: --cleanup --schedule "0 4 * * *"
-```
-
----
-
-## 🌐 Reverse Proxy Example (Nginx Proxy Manager)
-
-| App | Port | Notes |
-|-----|------|-------|
-| Plex | 32400 | Use http://host.docker.internal:32400 |
-| Sonarr | 8989 | Works normally |
-| Radarr | 7878 | Same as Sonarr |
-| Overseerr | 5055 | Great for public users |
-| qBittorrent | 8081 | Do **NOT** expose publicly |
-
-Use Let's Encrypt for SSL certificates.
-
----
-
-## 🔒 Security Note
-
-- Do not expose qBittorrent publicly.
-- A VPN is strongly recommended if you are torrenting.
-
----
-
-## 🧱 Example Overrides
-
-Create `docker-compose.override.yml` for local-only tweaks. This file is ignored by Git.
-
-```yaml
-services:
-  qbittorrent:
-    deploy:
-      resources:
-        limits:
-          memory: 1g
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Port already in use
-- Stop the service using the port or change the port in `.env.local`
-
-### Plex can't see media
-- Check folder mapping  
-- Correct permissions  
-
-### qBittorrent port closed
-- Ensure router/firewall forwards 6881 TCP/UDP  
-
-### Sonarr/Radarr not importing
-- Permissions issue or wrong folder path  
-- Keep `DOWNLOADS_PATH` and `MEDIA_PATH` on the same filesystem to allow hardlinks
-
-### Indexers failing
-- Use Jackett + FlareSolverr when behind Cloudflare  
-
----
-
-## ⚠️ Common Pitfalls
-
-- If you use `.env.local`, pass it explicitly: `docker compose --env-file .env.local up -d`
-- Permissions issues are the #1 cause of missing imports or failed downloads
-- Plex runs in host network mode, so its port is fixed at 32400 regardless of `PLEX_PORT`
-- Some services may show as "unhealthy" during initial startup while UI endpoints warm up
-
----
-
-## 🌐 Networking Notes
-
-- Plex uses host networking for discovery and DLNA; proxying it can break discovery.
-- Most other services can be safely proxied with standard HTTP reverse proxy setups.
-
----
-
-## 🧭 Recommended Hardlink Layout
-
-For Sonarr/Radarr, keep downloads and media on the same filesystem so hardlinks work:
-
-```
-/data
-├── downloads
-└── media
-```
-
-Then set:
-- `DOWNLOADS_PATH=/data/downloads`
-- `MEDIA_PATH=/data/media`
-
-## ❓ FAQ
-
-### Do I need a VPN for torrents?
-Recommended, but optional.
-
-### Can Plex transcode?
-Yes — CPU/GPU dependent.
-
-### Can this run on a NAS?
-Yes — Unraid, TrueNAS, Synology.
-
----
-
-## 🛠 Deployment
+**2. Clone and run the setup script**
 
 ```bash
 git clone https://github.com/clickbang101/arr-stack.git
 cd arr-stack
-docker compose --env-file .env.local up -d
+./setup.sh
 ```
 
-View logs:
+The script will ask where you want to store your media and downloads, then set everything up for you automatically — directories, permissions, config. It will offer to start the stack when done.
+
+**3. Open your services**
+
+After about 60 seconds:
+
+| Service | Address | What it does |
+|---------|---------|--------------|
+| Plex | http://localhost:32400/web | Watch your media |
+| Overseerr | http://localhost:5055 | Request new movies & shows |
+| Sonarr | http://localhost:8989 | Manages TV shows |
+| Radarr | http://localhost:7878 | Manages movies |
+| qBittorrent | http://localhost:8081 | Downloads torrents |
+| Prowlarr | http://localhost:9696 | Finds torrents on trackers |
+| Bazarr | http://localhost:6767 | Downloads subtitles |
+
+---
+
+## Portainer setup
+
+If you manage Docker through [Portainer](https://www.portainer.io/), use this flow instead of the command line.
+
+**Step 1 — Prepare directories on the host**
+
+SSH into your server and run:
 
 ```bash
-docker compose logs -f
+git clone https://github.com/clickbang101/arr-stack.git
+cd arr-stack
+./setup.sh --portainer
+```
+
+This creates the required directories and sets permissions, then prints all the environment variable values you'll need in Portainer. It does **not** start the stack — Portainer handles that.
+
+**Step 2 — Create a Stack in Portainer**
+
+1. Open Portainer → **Stacks → Add Stack**
+2. Give it a name (e.g. `arr-stack`)
+3. Choose one of:
+   - **Repository** — paste your repo URL and set the Compose path to `docker-compose.yml`
+   - **Web editor** — paste the contents of `docker-compose.yml` directly
+
+**Step 3 — Add environment variables**
+
+Scroll down to **Environment variables** and add each of these (use the values printed by `setup.sh --portainer`):
+
+| Variable | Example value |
+|----------|--------------|
+| `PUID` | `1000` |
+| `PGID` | `1000` |
+| `TZ` | `Africa/Johannesburg` |
+| `MEDIA_PATH` | `/data/media` |
+| `DOWNLOADS_PATH` | `/data/downloads` |
+| `APPDATA_PATH` | `/data/appdata` |
+| `RESTART_POLICY` | `unless-stopped` |
+| `PLEX_VERSION` | `docker` |
+| `QBITTORRENT_PORT` | `8081` |
+| `SONARR_PORT` | `8989` |
+| `RADARR_PORT` | `7878` |
+| `PROWLARR_PORT` | `9696` |
+| `BAZARR_PORT` | `6767` |
+| `OVERSEERR_PORT` | `5055` |
+| `JACKETT_PORT` | `9117` |
+| `FLARESOLVERR_PORT` | `8191` |
+| `LAZYLIBRARIAN_PORT` | `8299` |
+
+> Tip: Portainer also accepts an `.env` file upload — click **Load variables from .env file** and upload your `.env.local`.
+
+**Step 4 — Deploy**
+
+Click **Deploy the stack**. Portainer will pull images and start everything. Watch progress under **Containers**.
+
+**Managing the stack in Portainer**
+
+| Task | Where |
+|------|-------|
+| Start / stop / restart | Stacks → your stack → Editor |
+| View logs | Containers → container name → Logs |
+| Open a terminal | Containers → container name → Console |
+| Update images | Stacks → your stack → pull and redeploy |
+| Optional extras | Add `--profile extras` isn't available in Portainer UI — SSH in and run `make extras` |
+
+> **Optional extras (Jackett, FlareSolverr, LazyLibrarian):** Portainer doesn't support Compose profiles through its UI. To start those services, SSH into the host and run `make extras` from the repo directory.
+
+---
+
+## First-time wiring
+
+After all services are up, you need to connect them together once. Do this in order:
+
+### Step 1 — Change the qBittorrent password
+
+Open qBittorrent → Tools → Options → Web UI → change the password from `adminadmin` to something secure.
+
+### Step 2 — Add indexers in Prowlarr
+
+Open Prowlarr → Indexers → Add Indexer → search for and add the torrent sites you use.
+
+### Step 3 — Connect Prowlarr to Sonarr and Radarr
+
+You need the API keys from each app. Find them at:
+- Sonarr: Settings → General → API Key
+- Radarr: Settings → General → API Key
+
+Then in Prowlarr → Settings → Apps → Add Application → add both Sonarr and Radarr using those keys. Prowlarr will automatically push your indexers into both apps.
+
+### Step 4 — Connect Sonarr to qBittorrent
+
+Sonarr → Settings → Download Clients → Add → qBittorrent
+
+| Field | Value |
+|-------|-------|
+| Host | `qbittorrent` |
+| Port | `8081` |
+| Username | `admin` |
+| Password | *(the one you just set)* |
+
+Then: Settings → Media Management → Root Folders → add `/media`
+
+Repeat for Radarr.
+
+### Step 5 — Set up Bazarr (subtitles)
+
+Bazarr → Settings → Sonarr → URL: `http://sonarr:8989` + Sonarr API key  
+Bazarr → Settings → Radarr → URL: `http://radarr:7878` + Radarr API key  
+Bazarr → Settings → Languages → pick your preferred subtitle languages  
+Bazarr → Settings → Providers → add subtitle sources (OpenSubtitles is a good start)
+
+### Step 6 — Set up Overseerr
+
+Open Overseerr → follow the setup wizard → sign in with your Plex account → connect Sonarr and Radarr. Once done, you (and anyone you share the link with) can request movies and shows through Overseerr and they'll download automatically.
+
+### Step 7 — Add your library to Plex
+
+Plex → Settings → Libraries → Add Library → point it at `/media`. Plex will scan and match everything.
+
+---
+
+## Day-to-day commands
+
+```bash
+make up       # start everything
+make down     # stop everything
+make restart  # restart all containers
+make logs     # watch live logs (Ctrl+C to stop)
+make pull     # download image updates
+make ps       # see container status
+make extras   # start optional services (Jackett, FlareSolverr, LazyLibrarian)
 ```
 
 ---
 
-## 🔄 Updating
+## Optional services
 
-Pull the latest images and recreate containers:
+Three extra services are available but not started by default:
+
+| Service | Purpose | When to use |
+|---------|---------|-------------|
+| Jackett | Backup indexer proxy | Only if a tracker isn't in Prowlarr |
+| FlareSolverr | Cloudflare bypass | Needed by Jackett for some sites |
+| LazyLibrarian | Books & audiobooks | If you want to automate ebook downloads |
+
+Start them with:
 
 ```bash
-docker compose --env-file .env.local pull
-docker compose --env-file .env.local up -d
+make extras
 ```
 
-Or with the `Makefile`:
+---
+
+## Updating
+
+Pull the latest versions of all containers:
 
 ```bash
 make pull
 make up
 ```
 
-## 📝 License
-
-MIT License.
+Your settings and library are not affected — everything is stored in your app data folder.
 
 ---
 
-## 🤝 Support
+## Folder layout
 
-Open an issue anytime.
+```
+/data/
+├── media/        ← your final library (Plex points here)
+│   ├── tv/
+│   └── movies/
+├── downloads/    ← temporary downloads (cleared after import)
+└── appdata/      ← container configs (back this up)
+```
 
-If you need help, include relevant logs and your `.env.local` (with any secrets removed).
+Keep `media` and `downloads` on the same drive. This lets Sonarr and Radarr move files instantly without copying them.
 
 ---
 
-## ⚖️ Legal Note
+## Changing your config
 
-Use this stack responsibly and comply with local laws and content licensing.
+All settings are in `.env.local` (created by setup.sh). Edit it and restart:
+
+```bash
+nano .env.local
+make restart
+```
+
+| Setting | What it controls |
+|---------|-----------------|
+| `MEDIA_PATH` | Where your media library lives |
+| `DOWNLOADS_PATH` | Where torrents download to |
+| `APPDATA_PATH` | Where container configs are stored |
+| `TZ` | Your timezone |
+| `PUID` / `PGID` | The user containers run as |
+| `RESTART_POLICY` | Whether containers restart on reboot (`unless-stopped` = yes) |
+
+---
+
+## Reverse proxy (optional)
+
+If you want to access your services from outside your home network, put them behind a reverse proxy with HTTPS. [Nginx Proxy Manager](https://nginxproxymanager.com/) is the easiest option.
+
+Safe to expose publicly: **Overseerr**, **Plex**  
+Keep internal only: **qBittorrent**, Sonarr, Radarr, Prowlarr (unless you add a login)
+
+---
+
+## Troubleshooting
+
+**Containers won't start**
+```bash
+docker compose logs <service-name>
+```
+Look for missing directories or permission errors.
+
+**Sonarr/Radarr not importing downloads**  
+Make sure `DOWNLOADS_PATH` and `MEDIA_PATH` are on the same drive. If they're on different drives, files have to be copied instead of moved, which can cause timeouts.
+
+**Plex can't find my media**  
+Run `docker exec plex ls /media` — if it's empty, your `MEDIA_PATH` in `.env.local` is wrong.
+
+**Service shows "unhealthy" on first start**  
+Normal. Wait 60 seconds and check again with `make ps`.
+
+**Permission denied errors**  
+```bash
+sudo chown -R $(id -u):$(id -g) /data
+```
+
+**Wrong timezone**  
+Edit `TZ` in `.env.local` → `make restart`. Full list of valid values [here](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
+
+---
+
+## VPN (recommended for torrenting)
+
+If you're using public trackers, routing qBittorrent through a VPN is strongly recommended. Create a `docker-compose.override.yml` file (not tracked by git) with:
+
+```yaml
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER=your_provider
+      - OPENVPN_USER=your_username
+      - OPENVPN_PASSWORD=your_password
+    ports:
+      - ${QBITTORRENT_PORT}:${QBITTORRENT_PORT}
+
+  qbittorrent:
+    network_mode: "service:gluetun"
+    ports: []
+    depends_on:
+      - gluetun
+```
+
+Supported providers: Mullvad, ProtonVPN, NordVPN, and many more. See [Gluetun's wiki](https://github.com/qdm12/gluetun/wiki).
+
+---
+
+## Hardware
+
+| | Minimum | Better |
+|-|---------|--------|
+| CPU | 2 cores | 4+ cores |
+| RAM | 4 GB | 8 GB+ |
+| OS disk | Any | SSD |
+| Media disk | HDD | HDD or NAS |
+
+Plex hardware transcoding (faster, less CPU) requires a Plex Pass subscription and a GPU. Add this to `docker-compose.override.yml` for Intel iGPU:
+
+```yaml
+services:
+  plex:
+    devices:
+      - /dev/dri:/dev/dri
+```
+
+---
+
+## Security
+
+- Change the qBittorrent password immediately (default is `adminadmin`)
+- Do not expose qBittorrent to the internet
+- Use a VPN if you're downloading from public trackers
+- `.env.local` is excluded from git — never commit it
+
+---
+
+## FAQ
+
+**Do I need a VPN?** Recommended for public trackers, not strictly required.
+
+**Can this run on a NAS?** Yes — Unraid, TrueNAS SCALE, Synology (with Docker support).
+
+**Why does Plex use a different network mode?** Plex needs "host" networking for local discovery and DLNA. This is normal and expected.
+
+**What's Prowlarr vs Jackett?** Prowlarr is the modern replacement. It syncs indexers directly into Sonarr and Radarr. Jackett is older and only included as a fallback for trackers Prowlarr doesn't support yet.
+
+---
+
+## License
+
+MIT — use responsibly and in accordance with the laws of your jurisdiction.

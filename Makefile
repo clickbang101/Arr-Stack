@@ -1,21 +1,35 @@
-COMPOSE ?= docker compose
+COMPOSE  ?= docker compose
+ENV_FILE ?= .env.local
 
-.PHONY: up down restart logs pull ps
+# Fall back to .env if .env.local doesn't exist
+ifeq (,$(wildcard $(ENV_FILE)))
+  ENV_FILE = .env
+endif
+
+ENV_ARGS = --env-file $(ENV_FILE)
+
+.PHONY: up down restart logs pull ps extras setup
 
 up:
-	$(COMPOSE) up -d
+	$(COMPOSE) $(ENV_ARGS) up -d
 
 down:
-	$(COMPOSE) down
+	$(COMPOSE) $(ENV_ARGS) down
 
 restart:
-	$(COMPOSE) restart
+	$(COMPOSE) $(ENV_ARGS) restart
 
 logs:
-	$(COMPOSE) logs -f
+	$(COMPOSE) $(ENV_ARGS) logs -f
 
 pull:
-	$(COMPOSE) pull
+	$(COMPOSE) $(ENV_ARGS) pull
 
 ps:
-	$(COMPOSE) ps
+	$(COMPOSE) $(ENV_ARGS) ps
+
+extras:
+	$(COMPOSE) $(ENV_ARGS) --profile extras up -d
+
+setup:
+	@bash setup.sh
