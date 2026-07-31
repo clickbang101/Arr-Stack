@@ -16,7 +16,7 @@
 
 A one-command setup for a self-hosted media server. Automatically finds, downloads, organizes, and streams your TV shows, movies, and books.
 
-**What you get:** Plex · Sonarr · Radarr · qBittorrent · Prowlarr · Bazarr · Overseerr
+**What you get:** Plex · Sonarr · Radarr · qBittorrent · Prowlarr · Bazarr · Seerr · Jackett · FlareSolverr · Unpackerr · Tautulli · Maintainerr · Homarr · Nginx Proxy Manager
 
 ---
 
@@ -58,12 +58,19 @@ After about 60 seconds:
 | Service | Address | What it does |
 |---------|---------|--------------|
 | Plex | http://localhost:32400/web | Watch your media |
-| Overseerr | http://localhost:5055 | Request new movies & shows |
+| Seerr | http://localhost:5055 | Request new movies & shows (Overseerr fork) |
 | Sonarr | http://localhost:8989 | Manages TV shows |
 | Radarr | http://localhost:7878 | Manages movies |
 | qBittorrent | http://localhost:8081 | Downloads torrents |
 | Prowlarr | http://localhost:9696 | Finds torrents on trackers |
 | Bazarr | http://localhost:6767 | Downloads subtitles |
+| Jackett | http://localhost:9117 | Backup indexer proxy |
+| FlareSolverr | http://localhost:8191 | Cloudflare bypass (used by Jackett/Prowlarr) |
+| Tautulli | http://localhost:8181 | Plex watch stats & monitoring |
+| Maintainerr | http://localhost:6246 | Automated library cleanup rules |
+| Homarr | http://localhost:7575 | Dashboard for the whole stack |
+| Nginx Proxy Manager | http://localhost:81 | Reverse proxy admin UI |
+| Unpackerr | — (no UI) | Auto-extracts compressed downloads |
 
 ---
 
@@ -110,10 +117,19 @@ Scroll down to **Environment variables** and add each of these (use the values p
 | `RADARR_PORT` | `7878` |
 | `PROWLARR_PORT` | `9696` |
 | `BAZARR_PORT` | `6767` |
-| `OVERSEERR_PORT` | `5055` |
+| `SEERR_PORT` | `5055` |
 | `JACKETT_PORT` | `9117` |
 | `FLARESOLVERR_PORT` | `8191` |
 | `LAZYLIBRARIAN_PORT` | `8299` |
+| `TAUTULLI_PORT` | `8181` |
+| `MAINTAINERR_PORT` | `6246` |
+| `HOMARR_PORT` | `7575` |
+| `NPM_HTTP_PORT` | `80` |
+| `NPM_HTTPS_PORT` | `443` |
+| `NPM_ADMIN_PORT` | `81` |
+| `HOMARR_SECRET_ENCRYPTION_KEY` | output of `openssl rand -hex 32` |
+| `SONARR_API_KEY` | from Sonarr → Settings → General (fill in after first boot) |
+| `RADARR_API_KEY` | from Radarr → Settings → General (fill in after first boot) |
 
 > Tip: Portainer also accepts an `.env` file upload — click **Load variables from .env file** and upload your `.env.local`.
 
@@ -131,7 +147,7 @@ Click **Deploy the stack**. Portainer will pull images and start everything. Wat
 | Update images | Stacks → your stack → pull and redeploy |
 | Optional extras | Add `--profile extras` isn't available in Portainer UI — SSH in and run `make extras` |
 
-> **Optional extras (Jackett, FlareSolverr, LazyLibrarian):** Portainer doesn't support Compose profiles through its UI. To start those services, SSH into the host and run `make extras` from the repo directory.
+> **Optional extras (LazyLibrarian):** Portainer doesn't support Compose profiles through its UI. To start it, SSH into the host and run `make extras` from the repo directory.
 
 ---
 
@@ -177,11 +193,19 @@ Bazarr → Settings → Radarr → URL: `http://radarr:7878` + Radarr API key
 Bazarr → Settings → Languages → pick your preferred subtitle languages  
 Bazarr → Settings → Providers → add subtitle sources (OpenSubtitles is a good start)
 
-### Step 6 — Set up Overseerr
+### Step 6 — Set up Seerr
 
-Open Overseerr → follow the setup wizard → sign in with your Plex account → connect Sonarr and Radarr. Once done, you (and anyone you share the link with) can request movies and shows through Overseerr and they'll download automatically.
+Open Seerr → follow the setup wizard → sign in with your Plex account → connect Sonarr and Radarr. Once done, you (and anyone you share the link with) can request movies and shows through Seerr and they'll download automatically.
 
-### Step 7 — Add your library to Plex
+### Step 7 — Connect Unpackerr
+
+Unpackerr has no UI. Set `SONARR_API_KEY` and `RADARR_API_KEY` in `.env.local` (from Settings → General in each app), then `make restart` — it'll auto-extract compressed downloads before Sonarr/Radarr import them.
+
+### Step 8 — Set up Homarr (optional dashboard)
+
+Open Homarr → it auto-detects the other containers via the Docker socket mount. Add tiles for the services you want on your dashboard.
+
+### Step 9 — Add your library to Plex
 
 Plex → Settings → Libraries → Add Library → point it at `/media`. Plex will scan and match everything.
 
@@ -196,26 +220,26 @@ make restart  # restart all containers
 make logs     # watch live logs (Ctrl+C to stop)
 make pull     # download image updates
 make ps       # see container status
-make extras   # start optional services (Jackett, FlareSolverr, LazyLibrarian)
+make extras   # start optional services (LazyLibrarian)
 ```
 
 ---
 
 ## Optional services
 
-Three extra services are available but not started by default:
+LazyLibrarian is available but not started by default:
 
 | Service | Purpose | When to use |
 |---------|---------|-------------|
-| Jackett | Backup indexer proxy | Only if a tracker isn't in Prowlarr |
-| FlareSolverr | Cloudflare bypass | Needed by Jackett for some sites |
 | LazyLibrarian | Books & audiobooks | If you want to automate ebook downloads |
 
-Start them with:
+Start it with:
 
 ```bash
 make extras
 ```
+
+Jackett and FlareSolverr now start by default alongside the core stack (Prowlarr uses FlareSolverr for Cloudflare-protected trackers; Jackett is a fallback indexer proxy for trackers Prowlarr doesn't support).
 
 ---
 
@@ -271,8 +295,10 @@ make restart
 
 If you want to access your services from outside your home network, put them behind a reverse proxy with HTTPS. [Nginx Proxy Manager](https://nginxproxymanager.com/) is the easiest option.
 
-Safe to expose publicly: **Overseerr**, **Plex**  
-Keep internal only: **qBittorrent**, Sonarr, Radarr, Prowlarr (unless you add a login)
+Safe to expose publicly: **Seerr**, **Plex**  
+Keep internal only: **qBittorrent**, Sonarr, Radarr, Prowlarr, Homarr, Nginx Proxy Manager admin UI (unless you add a login)
+
+**Homarr's Docker socket mount** gives that container effectively root-level control over the host (it can start/stop/inspect any container, including ones with other host mounts). Only run Homarr if you trust everything else on this host and understand that trade-off — do not expose it to the internet.
 
 ---
 

@@ -2,6 +2,10 @@
 # Configure via .env file before deploying
 # See README.md for setup instructions
 
+networks:
+  arr-net:
+    name: arr-net
+
 services:
 
   plex:
@@ -27,6 +31,7 @@ services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent
     container_name: qbittorrent
+    networks: [arr-net]
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -50,6 +55,7 @@ services:
   sonarr:
     image: lscr.io/linuxserver/sonarr
     container_name: sonarr
+    networks: [arr-net]
     depends_on:
       qbittorrent:
         condition: service_healthy
@@ -74,6 +80,7 @@ services:
   radarr:
     image: lscr.io/linuxserver/radarr
     container_name: radarr
+    networks: [arr-net]
     depends_on:
       qbittorrent:
         condition: service_healthy
@@ -98,6 +105,7 @@ services:
   prowlarr:
     image: lscr.io/linuxserver/prowlarr
     container_name: prowlarr
+    networks: [arr-net]
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -117,6 +125,7 @@ services:
   bazarr:
     image: lscr.io/linuxserver/bazarr
     container_name: bazarr
+    networks: [arr-net]
     depends_on:
       sonarr:
         condition: service_healthy
@@ -139,9 +148,11 @@ services:
       start_period: 40s
     restart: ${RESTART_POLICY}
 
-  overseerr:
-    image: sctx/overseerr:latest
-    container_name: overseerr
+  # Seerr is the actively maintained community fork of Overseerr.
+  seerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: seerr
+    networks: [arr-net]
     depends_on:
       sonarr:
         condition: service_healthy
@@ -151,7 +162,7 @@ services:
       - LOG_LEVEL=info
       - TZ=${TZ}
     ports:
-      - ${OVERSEERR_PORT}:5055
+      - ${SEERR_PORT}:5055
     volumes:
       - ${APPDATA_PATH}/overseerr:/app/config
     healthcheck:
@@ -165,7 +176,7 @@ services:
   jackett:
     image: lscr.io/linuxserver/jackett
     container_name: jackett
-    profiles: ["extras"]
+    networks: [arr-net]
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -183,11 +194,10 @@ services:
       start_period: 40s
     restart: ${RESTART_POLICY}
 
-
   flaresolverr:
-    image: flaresolverr/flaresolverr:latest
+    image: 21hsmw/flaresolverr:nodriver
     container_name: flaresolverr
-    profiles: ["extras"]
+    networks: [arr-net]
     ports:
       - ${FLARESOLVERR_PORT}:8191
     environment:
@@ -201,10 +211,98 @@ services:
       start_period: 40s
     restart: ${RESTART_POLICY}
 
+  # Auto-extracts compressed downloads (rar/zip) before Sonarr/Radarr import.
+  unpackerr:
+    image: golift/unpackerr:latest
+    container_name: unpackerr
+    networks: [arr-net]
+    depends_on:
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - UN_SONARR_0_URL=http://sonarr:8989
+      - UN_SONARR_0_API_KEY=${SONARR_API_KEY}
+      - UN_RADARR_0_URL=http://radarr:7878
+      - UN_RADARR_0_API_KEY=${RADARR_API_KEY}
+    volumes:
+      - ${DOWNLOADS_PATH}:/downloads
+    restart: ${RESTART_POLICY}
+
+  tautulli:
+    image: lscr.io/linuxserver/tautulli
+    container_name: tautulli
+    networks: [arr-net]
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${APPDATA_PATH}/tautulli:/config
+    ports:
+      - ${TAUTULLI_PORT}:8181
+    healthcheck:
+      test: curl -f http://localhost:8181/status || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: ${RESTART_POLICY}
+
+  # Automated library cleanup rules (e.g. remove watched/stale media from Plex).
+  maintainerr:
+    image: ghcr.io/jorenn92/maintainerr:latest
+    container_name: maintainerr
+    networks: [arr-net]
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${APPDATA_PATH}/maintainerr:/opt/data
+    ports:
+      - ${MAINTAINERR_PORT}:6246
+    restart: ${RESTART_POLICY}
+
+  # Dashboard/homepage for the stack.
+  homarr:
+    image: ghcr.io/homarr-labs/homarr:latest
+    container_name: homarr
+    networks: [arr-net]
+    environment:
+      - SECRET_ENCRYPTION_KEY=${HOMARR_SECRET_ENCRYPTION_KEY}
+    volumes:
+      - ${APPDATA_PATH}/homarr:/appdata
+      # Grants Homarr read/write access to the Docker socket so it can show
+      # live container status. This is effectively root-equivalent host
+      # access - only enable if you understand and accept that trade-off.
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - ${HOMARR_PORT}:7575
+    restart: ${RESTART_POLICY}
+
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    networks: [arr-net]
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${APPDATA_PATH}/npm/data:/data
+      - ${APPDATA_PATH}/npm/letsencrypt:/etc/letsencrypt
+    ports:
+      - ${NPM_HTTP_PORT}:80
+      - ${NPM_HTTPS_PORT}:443
+      - ${NPM_ADMIN_PORT}:81
+    restart: ${RESTART_POLICY}
+
   lazylibrarian:
     image: lscr.io/linuxserver/lazylibrarian
     container_name: lazylibrarian
     profiles: ["extras"]
+    networks: [arr-net]
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
