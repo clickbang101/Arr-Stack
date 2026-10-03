@@ -1,35 +1,31 @@
-COMPOSE  ?= docker compose
-ENV_FILE ?= .env.local
+COMPOSE ?= docker compose
 
-# Fall back to .env if .env.local doesn't exist
-ifeq (,$(wildcard $(ENV_FILE)))
-  ENV_FILE = .env
-endif
+.PHONY: up down restart logs pull update ps network setup
 
-ENV_ARGS = --env-file $(ENV_FILE)
-
-.PHONY: up down restart logs pull ps extras setup
-
-up:
-	$(COMPOSE) $(ENV_ARGS) up -d
+up: network
+	$(COMPOSE) up -d
 
 down:
-	$(COMPOSE) $(ENV_ARGS) down
+	$(COMPOSE) down
 
 restart:
-	$(COMPOSE) $(ENV_ARGS) restart
+	$(COMPOSE) restart
 
 logs:
-	$(COMPOSE) $(ENV_ARGS) logs -f
+	$(COMPOSE) logs -f
 
 pull:
-	$(COMPOSE) $(ENV_ARGS) pull
+	$(COMPOSE) pull
+
+# Pull new images and recreate only containers whose image changed
+update: pull up
 
 ps:
-	$(COMPOSE) $(ENV_ARGS) ps
+	$(COMPOSE) ps
 
-extras:
-	$(COMPOSE) $(ENV_ARGS) --profile extras up -d
+# arr-net is external so other stacks (Homarr, NPM) can share it
+network:
+	@docker network inspect arr-net >/dev/null 2>&1 || docker network create arr-net
 
 setup:
 	@bash setup.sh
