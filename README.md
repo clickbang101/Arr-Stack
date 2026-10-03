@@ -83,6 +83,7 @@ Everything is in `.env` (copied from `.env.example`). `.env` is git-ignored. Nev
 | `DOWNLOADS_PATH` | Torrent downloads |
 | `*_PORT` | Web UI ports |
 | `PLEX_CPUS`, `UNPACKERR_CPUS`, `FLARESOLVERR_CPUS` | CPU caps (see below) |
+| `FLARESOLVERR_MEM` | FlareSolverr memory cap (see below) |
 | `SONARR_API_KEY`, `RADARR_API_KEY` | Used by Unpackerr |
 
 After editing: `make up` (CLI) or **Update the stack** in Portainer.
@@ -105,6 +106,12 @@ services:
     devices:
       - /dev/dri:/dev/dri
 ```
+
+### Memory and log limits
+
+**FlareSolverr** leaks Chromium processes over days. On this host it once reached 77 open browsers, filled the 4 GB swap and slowed everything down. It is capped at `FLARESOLVERR_MEM` (default `1g`, no swap). When it hits the cap the kernel kills the leaked browsers inside the container, and the rest of the host is unaffected. If indexer searches through FlareSolverr start failing, `docker restart flaresolverr` clears it.
+
+**Logs**: Docker's default logging never rotates. Every service keeps at most 3 × 10 MB of logs (the `x-logging` block at the top of `docker-compose.yml`). The cap only applies to containers created after the change, so it takes effect on the next stack update.
 
 ---
 

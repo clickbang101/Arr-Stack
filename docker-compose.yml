@@ -2,6 +2,14 @@
 # Configure via .env (copy .env.example) before deploying.
 # See README.md for setup and crash-recovery instructions.
 
+# Docker's default json-file logging never rotates, so logs grow until the
+# disk fills. Every service uses this: 3 x 10 MB max per container.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 networks:
   arr-net:
     # Shared with other stacks (e.g. Homarr, Nginx Proxy Manager), so it lives
@@ -14,6 +22,7 @@ services:
     image: lscr.io/linuxserver/plex:latest
     container_name: plex
     restart: unless-stopped
+    logging: *logging
     network_mode: host  # Plex requires host network mode for discovery/DLNA
     # No GPU on this host, so all transcoding is software. Cap it so a busy
     # transcode can't starve the rest of the stack.
@@ -31,6 +40,7 @@ services:
     image: lscr.io/linuxserver/tautulli:latest
     container_name: tautulli
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     ports:
       - ${TAUTULLI_PORT:-8181}:8181
@@ -46,6 +56,7 @@ services:
     image: ghcr.io/seerr-team/seerr:latest
     container_name: seerr
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     ports:
       - ${SEERR_PORT:-5055}:5055
@@ -60,6 +71,7 @@ services:
     image: ghcr.io/jorenn92/maintainerr:latest
     container_name: maintainerr
     restart: unless-stopped
+    logging: *logging
     user: "${PUID:-1000}:${PGID:-1000}"
     networks: [arr-net]
     ports:
@@ -73,6 +85,7 @@ services:
     image: lscr.io/linuxserver/sonarr:latest
     container_name: sonarr
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     ports:
       - ${SONARR_PORT:-8989}:8989
@@ -89,6 +102,7 @@ services:
     image: lscr.io/linuxserver/radarr:latest
     container_name: radarr
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     ports:
       - ${RADARR_PORT:-7878}:7878
@@ -105,6 +119,7 @@ services:
     image: lscr.io/linuxserver/bazarr:latest
     container_name: bazarr
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     ports:
       - ${BAZARR_PORT:-6767}:6767
@@ -120,6 +135,7 @@ services:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: prowlarr
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     ports:
       - ${PROWLARR_PORT:-9696}:9696
@@ -134,6 +150,7 @@ services:
     image: lscr.io/linuxserver/jackett:latest
     container_name: jackett
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     ports:
       - ${JACKETT_PORT:-9117}:9117
@@ -149,6 +166,7 @@ services:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     ports:
       - ${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}
@@ -168,6 +186,7 @@ services:
     image: golift/unpackerr:latest
     container_name: unpackerr
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     cpus: ${UNPACKERR_CPUS:-1}
     environment:
@@ -186,8 +205,15 @@ services:
     image: 21hsmw/flaresolverr:nodriver
     container_name: flaresolverr
     restart: unless-stopped
+    logging: *logging
     networks: [arr-net]
     cpus: ${FLARESOLVERR_CPUS:-1}
+    # Leaks Chromium processes over days (seen: 77 browsers, swap 100% full).
+    # The cap makes the kernel kill leaked browsers inside this container
+    # instead of pushing the whole host into swap. Swap limit = memory limit,
+    # so it can't spill into swap either.
+    mem_limit: ${FLARESOLVERR_MEM:-1g}
+    memswap_limit: ${FLARESOLVERR_MEM:-1g}
     ports:
       - ${FLARESOLVERR_PORT:-8191}:8191
     environment:
