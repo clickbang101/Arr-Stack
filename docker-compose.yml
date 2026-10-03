@@ -1,322 +1,195 @@
 # ARR Stack - Complete Media Automation
-# Configure via .env file before deploying
-# See README.md for setup instructions
+# Configure via .env (copy .env.example) before deploying.
+# See README.md for setup and crash-recovery instructions.
 
 networks:
   arr-net:
-    name: arr-net
+    # Shared with other stacks (e.g. Homarr, Nginx Proxy Manager), so it lives
+    # outside this stack. Create once per host: docker network create arr-net
+    external: true
 
 services:
 
   plex:
-    image: lscr.io/linuxserver/plex
+    image: lscr.io/linuxserver/plex:latest
     container_name: plex
-    network_mode: host  # Plex requires host network mode for proper functionality
+    restart: unless-stopped
+    network_mode: host  # Plex requires host network mode for discovery/DLNA
+    # No GPU on this host, so all transcoding is software. Cap it so a busy
+    # transcode can't starve the rest of the stack.
+    cpus: ${PLEX_CPUS:-3}
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - VERSION=${PLEX_VERSION}
-      - TZ=${TZ}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+      - VERSION=docker
     volumes:
-      - ${MEDIA_PATH}:/media
-      - ${APPDATA_PATH}/plex:/config
-    healthcheck:
-      test: curl -f http://localhost:32400/identity || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/plex:/config
+      - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media
 
-  qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent
-    container_name: qbittorrent
+  tautulli:
+    image: lscr.io/linuxserver/tautulli:latest
+    container_name: tautulli
+    restart: unless-stopped
     networks: [arr-net]
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-      - WEBUI_PORT=${QBITTORRENT_PORT}
-    volumes:
-      - ${DOWNLOADS_PATH}:/downloads
-      - ${APPDATA_PATH}/qbittorrent:/config
     ports:
-      - ${QBITTORRENT_PORT}:${QBITTORRENT_PORT}
-      - 6881:6881
-      - 6881:6881/udp
-    healthcheck:
-      test: curl -f http://localhost:${QBITTORRENT_PORT}/api/v2/app/webapiVersion || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
-
-  sonarr:
-    image: lscr.io/linuxserver/sonarr
-    container_name: sonarr
-    networks: [arr-net]
-    depends_on:
-      qbittorrent:
-        condition: service_healthy
+      - ${TAUTULLI_PORT:-8181}:8181
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
     volumes:
-      - ${DOWNLOADS_PATH}:/downloads
-      - ${MEDIA_PATH}:/media
-      - ${APPDATA_PATH}/sonarr:/config
-    ports:
-      - ${SONARR_PORT}:8989
-    healthcheck:
-      test: curl -f http://localhost:8989/health || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
-
-  radarr:
-    image: lscr.io/linuxserver/radarr
-    container_name: radarr
-    networks: [arr-net]
-    depends_on:
-      qbittorrent:
-        condition: service_healthy
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-    volumes:
-      - ${DOWNLOADS_PATH}:/downloads
-      - ${MEDIA_PATH}:/media
-      - ${APPDATA_PATH}/radarr:/config
-    ports:
-      - ${RADARR_PORT}:7878
-    healthcheck:
-      test: curl -f http://localhost:7878/health || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
-
-  prowlarr:
-    image: lscr.io/linuxserver/prowlarr
-    container_name: prowlarr
-    networks: [arr-net]
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-    volumes:
-      - ${APPDATA_PATH}/prowlarr:/config
-    ports:
-      - ${PROWLARR_PORT}:9696
-    healthcheck:
-      test: curl -f http://localhost:9696/health || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
-
-  bazarr:
-    image: lscr.io/linuxserver/bazarr
-    container_name: bazarr
-    networks: [arr-net]
-    depends_on:
-      sonarr:
-        condition: service_healthy
-      radarr:
-        condition: service_healthy
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-    volumes:
-      - ${MEDIA_PATH}:/media
-      - ${APPDATA_PATH}/bazarr:/config
-    ports:
-      - ${BAZARR_PORT}:6767
-    healthcheck:
-      test: curl -f http://localhost:6767/health || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/tautulli:/config
 
   # Seerr is the actively maintained community fork of Overseerr.
   seerr:
     image: ghcr.io/seerr-team/seerr:latest
     container_name: seerr
+    restart: unless-stopped
     networks: [arr-net]
-    depends_on:
-      sonarr:
-        condition: service_healthy
-      radarr:
-        condition: service_healthy
+    ports:
+      - ${SEERR_PORT:-5055}:5055
     environment:
       - LOG_LEVEL=info
-      - TZ=${TZ}
-    ports:
-      - ${SEERR_PORT}:5055
+      - TZ=${TZ:-UTC}
     volumes:
-      - ${APPDATA_PATH}/overseerr:/app/config
-    healthcheck:
-      test: curl -f http://localhost:5055/api/v1/settings/main || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    restart: ${RESTART_POLICY}
-
-  jackett:
-    image: lscr.io/linuxserver/jackett
-    container_name: jackett
-    networks: [arr-net]
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-    volumes:
-      - ${APPDATA_PATH}/jackett:/config
-      - ${DOWNLOADS_PATH}:/downloads
-    ports:
-      - ${JACKETT_PORT}:9117
-    healthcheck:
-      test: curl -f http://localhost:9117/health || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
-
-  flaresolverr:
-    image: 21hsmw/flaresolverr:nodriver
-    container_name: flaresolverr
-    networks: [arr-net]
-    ports:
-      - ${FLARESOLVERR_PORT}:8191
-    environment:
-      - LOG_LEVEL=info
-    platform: linux/amd64  # or linux/arm64 if you're on ARM
-    healthcheck:
-      test: curl -f http://localhost:8191/ || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
-
-  # Auto-extracts compressed downloads (rar/zip) before Sonarr/Radarr import.
-  unpackerr:
-    image: golift/unpackerr:latest
-    container_name: unpackerr
-    networks: [arr-net]
-    depends_on:
-      sonarr:
-        condition: service_healthy
-      radarr:
-        condition: service_healthy
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-      - UN_SONARR_0_URL=http://sonarr:8989
-      - UN_SONARR_0_API_KEY=${SONARR_API_KEY}
-      - UN_RADARR_0_URL=http://radarr:7878
-      - UN_RADARR_0_API_KEY=${RADARR_API_KEY}
-    volumes:
-      - ${DOWNLOADS_PATH}:/downloads
-    restart: ${RESTART_POLICY}
-
-  tautulli:
-    image: lscr.io/linuxserver/tautulli
-    container_name: tautulli
-    networks: [arr-net]
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-    volumes:
-      - ${APPDATA_PATH}/tautulli:/config
-    ports:
-      - ${TAUTULLI_PORT}:8181
-    healthcheck:
-      test: curl -f http://localhost:8181/status || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/overseerr:/app/config
 
   # Automated library cleanup rules (e.g. remove watched/stale media from Plex).
   maintainerr:
     image: ghcr.io/jorenn92/maintainerr:latest
     container_name: maintainerr
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
     networks: [arr-net]
-    environment:
-      - TZ=${TZ}
-    volumes:
-      - ${APPDATA_PATH}/maintainerr:/opt/data
     ports:
-      - ${MAINTAINERR_PORT}:6246
-    restart: ${RESTART_POLICY}
+      - ${MAINTAINERR_PORT:-6246}:6246
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/maintainerr:/opt/data
 
-  # Dashboard/homepage for the stack.
-  homarr:
-    image: ghcr.io/homarr-labs/homarr:latest
-    container_name: homarr
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
     networks: [arr-net]
-    environment:
-      - SECRET_ENCRYPTION_KEY=${HOMARR_SECRET_ENCRYPTION_KEY}
-    volumes:
-      - ${APPDATA_PATH}/homarr:/appdata
-      # Grants Homarr read/write access to the Docker socket so it can show
-      # live container status. This is effectively root-equivalent host
-      # access - only enable if you understand and accept that trade-off.
-      - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - ${HOMARR_PORT}:7575
-    restart: ${RESTART_POLICY}
+      - ${SONARR_PORT:-8989}:8989
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/sonarr:/config
+      - ${DOWNLOADS_PATH:?set DOWNLOADS_PATH in .env}:/downloads
+      - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media
 
-  nginx-proxy-manager:
-    image: jc21/nginx-proxy-manager:latest
-    container_name: nginx-proxy-manager
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
     networks: [arr-net]
-    environment:
-      - TZ=${TZ}
-    volumes:
-      - ${APPDATA_PATH}/npm/data:/data
-      - ${APPDATA_PATH}/npm/letsencrypt:/etc/letsencrypt
     ports:
-      - ${NPM_HTTP_PORT}:80
-      - ${NPM_HTTPS_PORT}:443
-      - ${NPM_ADMIN_PORT}:81
-    restart: ${RESTART_POLICY}
+      - ${RADARR_PORT:-7878}:7878
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/radarr:/config
+      - ${DOWNLOADS_PATH:?set DOWNLOADS_PATH in .env}:/downloads
+      - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media
 
-  lazylibrarian:
-    image: lscr.io/linuxserver/lazylibrarian
-    container_name: lazylibrarian
-    profiles: ["extras"]
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    restart: unless-stopped
     networks: [arr-net]
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-    volumes:
-      - ${DOWNLOADS_PATH}:/downloads
-      - ${MEDIA_PATH}:/books
-      - ${APPDATA_PATH}/lazylibrarian:/config
     ports:
-      - ${LAZYLIBRARIAN_PORT}:5299
-    healthcheck:
-      test: curl -f http://localhost:5299/ || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    restart: ${RESTART_POLICY}
+      - ${BAZARR_PORT:-6767}:6767
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/bazarr:/config
+      - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    networks: [arr-net]
+    ports:
+      - ${PROWLARR_PORT:-9696}:9696
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/prowlarr:/config
+
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    restart: unless-stopped
+    networks: [arr-net]
+    ports:
+      - ${JACKETT_PORT:-9117}:9117
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/jackett:/config
+      - ${DOWNLOADS_PATH:?set DOWNLOADS_PATH in .env}:/downloads
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    networks: [arr-net]
+    ports:
+      - ${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}
+      - 6881:6881
+      - 6881:6881/udp
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+      - WEBUI_PORT=${QBITTORRENT_PORT:-8080}
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/qbittorrent:/config
+      - ${DOWNLOADS_PATH:?set DOWNLOADS_PATH in .env}:/downloads
+
+  # Auto-extracts compressed downloads (rar/zip) before Sonarr/Radarr import.
+  unpackerr:
+    image: golift/unpackerr:latest
+    container_name: unpackerr
+    restart: unless-stopped
+    networks: [arr-net]
+    cpus: ${UNPACKERR_CPUS:-1}
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+      - UN_SONARR_0_URL=http://sonarr:8989
+      - UN_SONARR_0_API_KEY=${SONARR_API_KEY}
+      - UN_RADARR_0_URL=http://radarr:7878
+      - UN_RADARR_0_API_KEY=${RADARR_API_KEY}
+    volumes:
+      - ${DOWNLOADS_PATH:?set DOWNLOADS_PATH in .env}:/downloads
+
+  # Headless Chrome for Cloudflare-protected indexers; spikes CPU per solve.
+  flaresolverr:
+    image: 21hsmw/flaresolverr:nodriver
+    container_name: flaresolverr
+    restart: unless-stopped
+    networks: [arr-net]
+    cpus: ${FLARESOLVERR_CPUS:-1}
+    ports:
+      - ${FLARESOLVERR_PORT:-8191}:8191
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TZ:-UTC}
