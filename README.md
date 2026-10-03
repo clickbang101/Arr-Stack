@@ -14,140 +14,111 @@
   </a>
 </p>
 
-A one-command setup for a self-hosted media server. Automatically finds, downloads, organizes, and streams your TV shows, movies, and books.
+A self-hosted media server stack. Plex, the *arr apps, qBittorrent and friends find, download, organise and stream your TV shows and movies.
 
-**What you get:** Plex · Sonarr · Radarr · qBittorrent · Prowlarr · Bazarr · Seerr · Jackett · FlareSolverr · Unpackerr · Tautulli · Maintainerr · Homarr · Nginx Proxy Manager
+**Services (12):** Plex · Sonarr · Radarr · Prowlarr · Bazarr · qBittorrent · Seerr · Jackett · FlareSolverr · Unpackerr · Tautulli · Maintainerr
 
----
-
-## Setup
-
-Choose your method:
-
-- [Command line (recommended)](#command-line-setup)
-- [Portainer](#portainer-setup)
+`docker-compose.yml` mirrors the `arr-stack` stack as deployed in Portainer. Homarr and Nginx Proxy Manager run as **separate** Portainer stacks and share the `arr-net` network. They are not part of this file.
 
 ---
 
-## Command line setup
+## Rebuild after a crash (quick path)
 
-**1. Install Docker**
-
-If you don't have Docker yet:
+All state lives in the app data folder. If you still have it, or have a backup, the stack comes back exactly as it was: same API keys, libraries and settings.
 
 ```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-# Log out and back in after this
+# 1. Docker installed, user in the docker group
+curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER   # then log out/in
+
+# 2. Restore app data (if the disk was lost), e.g.
+#    rsync -a backup:/appdata/ /home/supervisor/appdata/
+
+# 3. Get the repo and prepare the host
+git clone https://github.com/clickbang101/Arr-Stack.git && cd Arr-Stack
+./setup.sh --portainer     # or plain ./setup.sh to start it from the CLI
 ```
 
-**2. Clone and run the setup script**
+`setup.sh` creates the `arr-net` network, writes `.env` from `.env.example` (only if missing), and creates the app data folders. It never overwrites existing config or data.
 
-```bash
-git clone https://github.com/clickbang101/arr-stack.git
-cd arr-stack
-./setup.sh
-```
+Then **either** start from the CLI with `make up`, **or** use Portainer:
 
-The script will ask where you want to store your media and downloads, then set everything up for you automatically — directories, permissions, config. It will offer to start the stack when done.
+1. **Stacks → Add stack**, name `arr-stack`
+2. **Repository** → `https://github.com/clickbang101/Arr-Stack`, compose path `docker-compose.yml`
+3. **Environment variables → Load variables from .env file** → upload your `.env`
+4. **Deploy the stack**
 
-**3. Open your services**
+> Fill in `SONARR_API_KEY` / `RADARR_API_KEY` in `.env` (Sonarr/Radarr → Settings → General). They're only needed by Unpackerr. If you restored app data, the keys are the same as before.
 
-After about 60 seconds:
+---
+
+## Services
 
 | Service | Address | What it does |
 |---------|---------|--------------|
-| Plex | http://localhost:32400/web | Watch your media |
-| Seerr | http://localhost:5055 | Request new movies & shows (Overseerr fork) |
-| Sonarr | http://localhost:8989 | Manages TV shows |
-| Radarr | http://localhost:7878 | Manages movies |
-| qBittorrent | http://localhost:8081 | Downloads torrents |
-| Prowlarr | http://localhost:9696 | Finds torrents on trackers |
-| Bazarr | http://localhost:6767 | Downloads subtitles |
-| Jackett | http://localhost:9117 | Backup indexer proxy |
-| FlareSolverr | http://localhost:8191 | Cloudflare bypass (used by Jackett/Prowlarr) |
-| Tautulli | http://localhost:8181 | Plex watch stats & monitoring |
-| Maintainerr | http://localhost:6246 | Automated library cleanup rules |
-| Homarr | http://localhost:7575 | Dashboard for the whole stack |
-| Nginx Proxy Manager | http://localhost:81 | Reverse proxy admin UI |
-| Unpackerr | — (no UI) | Auto-extracts compressed downloads |
+| Plex | http://HOST:32400/web | Watch your media |
+| Seerr | http://HOST:5055 | Request new movies & shows (Overseerr fork) |
+| Sonarr | http://HOST:8989 | Manages TV shows |
+| Radarr | http://HOST:7878 | Manages movies |
+| qBittorrent | http://HOST:8080 | Downloads torrents |
+| Prowlarr | http://HOST:9696 | Indexer manager, syncs into Sonarr/Radarr |
+| Bazarr | http://HOST:6767 | Downloads subtitles |
+| Jackett | http://HOST:9117 | Fallback indexer proxy |
+| FlareSolverr | http://HOST:8191 | Cloudflare bypass for Prowlarr/Jackett |
+| Tautulli | http://HOST:8181 | Plex watch stats |
+| Maintainerr | http://HOST:6246 | Automated library cleanup rules |
+| Unpackerr | (no UI) | Auto-extracts compressed downloads |
 
 ---
 
-## Portainer setup
+## Configuration
 
-If you manage Docker through [Portainer](https://www.portainer.io/), use this flow instead of the command line.
+Everything is in `.env` (copied from `.env.example`). `.env` is git-ignored. Never commit it.
 
-**Step 1 — Prepare directories on the host**
+| Setting | What it controls |
+|---------|-----------------|
+| `PUID` / `PGID` | User the containers run as (`id` on the host) |
+| `TZ` | Timezone |
+| `APPDATA_PATH` | Container configs and databases. **Back this up.** |
+| `MEDIA_PATH` | Final library (Plex, Sonarr, Radarr, Bazarr) |
+| `DOWNLOADS_PATH` | Torrent downloads |
+| `*_PORT` | Web UI ports |
+| `PLEX_CPUS`, `UNPACKERR_CPUS`, `FLARESOLVERR_CPUS` | CPU caps (see below) |
+| `SONARR_API_KEY`, `RADARR_API_KEY` | Used by Unpackerr |
 
-SSH into your server and run:
+After editing: `make up` (CLI) or **Update the stack** in Portainer.
 
-```bash
-git clone https://github.com/clickbang101/arr-stack.git
-cd arr-stack
-./setup.sh --portainer
+### CPU limits
+
+The host is a 4-vCPU VM with **no GPU**, so Plex transcodes in software, and one 1080p→720p transcode can use every core. To keep the rest of the stack responsive:
+
+| Container | Default cap | Why |
+|-----------|-------------|-----|
+| Plex | 3 cores | Software transcoding |
+| Unpackerr | 1 core | RAR/ZIP extraction |
+| FlareSolverr | 1 core | Headless Chrome per Cloudflare solve |
+
+A capped Plex can still buffer on heavy transcodes. To cut transcode load at the source, set clients to **Original/Maximum** quality, and limit simultaneous transcodes in Plex → Settings → Transcoder. A real fix is GPU passthrough plus a Plex Pass. Add the device in a `docker-compose.override.yml`:
+
+```yaml
+services:
+  plex:
+    devices:
+      - /dev/dri:/dev/dri
 ```
 
-This creates the required directories and sets permissions, then prints all the environment variable values you'll need in Portainer. It does **not** start the stack — Portainer handles that.
+---
 
-**Step 2 — Create a Stack in Portainer**
+## Backups
 
-1. Open Portainer → **Stacks → Add Stack**
-2. Give it a name (e.g. `arr-stack`)
-3. Choose one of:
-   - **Repository** — paste your repo URL and set the Compose path to `docker-compose.yml`
-   - **Web editor** — paste the contents of `docker-compose.yml` directly
+`APPDATA_PATH` is the only thing you need to rebuild the stack. Media can be re-downloaded. Stop the stack first so the SQLite databases are consistent:
 
-**Step 3 — Add environment variables**
+```bash
+make down
+sudo tar czf appdata-$(date +%F).tgz -C /home/supervisor appdata
+make up
+```
 
-Scroll down to **Environment variables** and add each of these (use the values printed by `setup.sh --portainer`):
-
-| Variable | Example value |
-|----------|--------------|
-| `PUID` | `1000` |
-| `PGID` | `1000` |
-| `TZ` | `Africa/Johannesburg` |
-| `MEDIA_PATH` | `/data/media` |
-| `DOWNLOADS_PATH` | `/data/downloads` |
-| `APPDATA_PATH` | `/data/appdata` |
-| `RESTART_POLICY` | `unless-stopped` |
-| `PLEX_VERSION` | `docker` |
-| `QBITTORRENT_PORT` | `8081` |
-| `SONARR_PORT` | `8989` |
-| `RADARR_PORT` | `7878` |
-| `PROWLARR_PORT` | `9696` |
-| `BAZARR_PORT` | `6767` |
-| `SEERR_PORT` | `5055` |
-| `JACKETT_PORT` | `9117` |
-| `FLARESOLVERR_PORT` | `8191` |
-| `LAZYLIBRARIAN_PORT` | `8299` |
-| `TAUTULLI_PORT` | `8181` |
-| `MAINTAINERR_PORT` | `6246` |
-| `HOMARR_PORT` | `7575` |
-| `NPM_HTTP_PORT` | `80` |
-| `NPM_HTTPS_PORT` | `443` |
-| `NPM_ADMIN_PORT` | `81` |
-| `HOMARR_SECRET_ENCRYPTION_KEY` | output of `openssl rand -hex 32` |
-| `SONARR_API_KEY` | from Sonarr → Settings → General (fill in after first boot) |
-| `RADARR_API_KEY` | from Radarr → Settings → General (fill in after first boot) |
-
-> Tip: Portainer also accepts an `.env` file upload — click **Load variables from .env file** and upload your `.env.local`.
-
-**Step 4 — Deploy**
-
-Click **Deploy the stack**. Portainer will pull images and start everything. Watch progress under **Containers**.
-
-**Managing the stack in Portainer**
-
-| Task | Where |
-|------|-------|
-| Start / stop / restart | Stacks → your stack → Editor |
-| View logs | Containers → container name → Logs |
-| Open a terminal | Containers → container name → Console |
-| Update images | Stacks → your stack → pull and redeploy |
-| Optional extras | Add `--profile extras` isn't available in Portainer UI — SSH in and run `make extras` |
-
-> **Optional extras (LazyLibrarian):** Portainer doesn't support Compose profiles through its UI. To start it, SSH into the host and run `make extras` from the repo directory.
+Also keep a copy of your `.env` somewhere safe outside the repo.
 
 ---
 
@@ -178,7 +149,7 @@ Sonarr → Settings → Download Clients → Add → qBittorrent
 | Field | Value |
 |-------|-------|
 | Host | `qbittorrent` |
-| Port | `8081` |
+| Port | `8080` |
 | Username | `admin` |
 | Password | *(the one you just set)* |
 
@@ -199,13 +170,9 @@ Open Seerr → follow the setup wizard → sign in with your Plex account → co
 
 ### Step 7 — Connect Unpackerr
 
-Unpackerr has no UI. Set `SONARR_API_KEY` and `RADARR_API_KEY` in `.env.local` (from Settings → General in each app), then `make restart` — it'll auto-extract compressed downloads before Sonarr/Radarr import them.
+Unpackerr has no UI. Set `SONARR_API_KEY` and `RADARR_API_KEY` in `.env` (from Settings → General in each app), then `make restart` — it'll auto-extract compressed downloads before Sonarr/Radarr import them.
 
-### Step 8 — Set up Homarr (optional dashboard)
-
-Open Homarr → it auto-detects the other containers via the Docker socket mount. Add tiles for the services you want on your dashboard.
-
-### Step 9 — Add your library to Plex
+### Step 8 — Add your library to Plex
 
 Plex → Settings → Libraries → Add Library → point it at `/media`. Plex will scan and match everything.
 
@@ -214,118 +181,53 @@ Plex → Settings → Libraries → Add Library → point it at `/media`. Plex w
 ## Day-to-day commands
 
 ```bash
-make up       # start everything
+make up       # create network if needed, start everything
 make down     # stop everything
 make restart  # restart all containers
-make logs     # watch live logs (Ctrl+C to stop)
-make pull     # download image updates
-make ps       # see container status
-make extras   # start optional services (LazyLibrarian)
+make logs     # follow logs (Ctrl+C to stop)
+make update   # pull new images and recreate changed containers
+make ps       # container status
 ```
 
----
-
-## Optional services
-
-LazyLibrarian is available but not started by default:
-
-| Service | Purpose | When to use |
-|---------|---------|-------------|
-| LazyLibrarian | Books & audiobooks | If you want to automate ebook downloads |
-
-Start it with:
-
-```bash
-make extras
-```
-
-Jackett and FlareSolverr now start by default alongside the core stack (Prowlarr uses FlareSolverr for Cloudflare-protected trackers; Jackett is a fallback indexer proxy for trackers Prowlarr doesn't support).
-
----
-
-## Updating
-
-Pull the latest versions of all containers:
-
-```bash
-make pull
-make up
-```
-
-Your settings and library are not affected — everything is stored in your app data folder.
+In Portainer: **Stacks → arr-stack → Pull and redeploy** does the same as `make update`.
 
 ---
 
 ## Folder layout
 
 ```
-/data/
-├── media/        ← your final library (Plex points here)
-│   ├── tv/
-│   └── movies/
-├── downloads/    ← temporary downloads (cleared after import)
-└── appdata/      ← container configs (back this up)
+/home/supervisor/
+├── appdata/            ← container configs (back this up)
+└── share/
+    ├── media/          ← final library (Plex points here)
+    │   ├── tv/
+    │   └── movies/
+    └── downloads/      ← in-progress downloads
 ```
 
-Keep `media` and `downloads` on the same drive. This lets Sonarr and Radarr move files instantly without copying them.
-
----
-
-## Changing your config
-
-All settings are in `.env.local` (created by setup.sh). Edit it and restart:
-
-```bash
-nano .env.local
-make restart
-```
-
-| Setting | What it controls |
-|---------|-----------------|
-| `MEDIA_PATH` | Where your media library lives |
-| `DOWNLOADS_PATH` | Where torrents download to |
-| `APPDATA_PATH` | Where container configs are stored |
-| `TZ` | Your timezone |
-| `PUID` / `PGID` | The user containers run as |
-| `RESTART_POLICY` | Whether containers restart on reboot (`unless-stopped` = yes) |
-
----
-
-## Reverse proxy (optional)
-
-If you want to access your services from outside your home network, put them behind a reverse proxy with HTTPS. [Nginx Proxy Manager](https://nginxproxymanager.com/) is the easiest option.
-
-Safe to expose publicly: **Seerr**, **Plex**  
-Keep internal only: **qBittorrent**, Sonarr, Radarr, Prowlarr, Homarr, Nginx Proxy Manager admin UI (unless you add a login)
-
-**Homarr's Docker socket mount** gives that container effectively root-level control over the host (it can start/stop/inspect any container, including ones with other host mounts). Only run Homarr if you trust everything else on this host and understand that trade-off — do not expose it to the internet.
+Keep `media` and `downloads` on the same filesystem so Sonarr/Radarr can move files instantly instead of copying.
 
 ---
 
 ## Troubleshooting
 
+**`network arr-net declared as external, but could not be found`**
+Run `docker network create arr-net` (or `make network` / `./setup.sh`).
+
+**`required variable APPDATA_PATH is missing a value`**
+The stack has no `.env` loaded. On the CLI, create `.env`. In Portainer, load it under Environment variables.
+
 **Containers won't start**
-```bash
-docker compose logs <service-name>
-```
-Look for missing directories or permission errors.
+`docker logs <name>`. Usually a missing directory or wrong `PUID`/`PGID` ownership.
 
-**Sonarr/Radarr not importing downloads**  
-Make sure `DOWNLOADS_PATH` and `MEDIA_PATH` are on the same drive. If they're on different drives, files have to be copied instead of moved, which can cause timeouts.
+**Sonarr/Radarr not importing**
+Check that `DOWNLOADS_PATH` and `MEDIA_PATH` are on the same drive, and that qBittorrent's save path is under `/downloads`.
 
-**Plex can't find my media**  
-Run `docker exec plex ls /media` — if it's empty, your `MEDIA_PATH` in `.env.local` is wrong.
+**Plex can't find media**
+`docker exec plex ls /media`. If it's empty, `MEDIA_PATH` is wrong.
 
-**Service shows "unhealthy" on first start**  
-Normal. Wait 60 seconds and check again with `make ps`.
-
-**Permission denied errors**  
-```bash
-sudo chown -R $(id -u):$(id -g) /data
-```
-
-**Wrong timezone**  
-Edit `TZ` in `.env.local` → `make restart`. Full list of valid values [here](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
+**Everything is slow while someone is watching**
+Plex is transcoding. See [CPU limits](#cpu-limits).
 
 ---
 
@@ -358,32 +260,12 @@ Supported providers: Mullvad, ProtonVPN, NordVPN, and many more. See [Gluetun's 
 
 ---
 
-## Hardware
-
-| | Minimum | Better |
-|-|---------|--------|
-| CPU | 2 cores | 4+ cores |
-| RAM | 4 GB | 8 GB+ |
-| OS disk | Any | SSD |
-| Media disk | HDD | HDD or NAS |
-
-Plex hardware transcoding (faster, less CPU) requires a Plex Pass subscription and a GPU. Add this to `docker-compose.override.yml` for Intel iGPU:
-
-```yaml
-services:
-  plex:
-    devices:
-      - /dev/dri:/dev/dri
-```
-
----
-
 ## Security
 
-- Change the qBittorrent password immediately (default is `adminadmin`)
-- Do not expose qBittorrent to the internet
-- Use a VPN if you're downloading from public trackers
-- `.env.local` is excluded from git — never commit it
+- Change the qBittorrent password immediately (newer images print a temporary one in `docker logs qbittorrent`)
+- Don't expose qBittorrent, Sonarr, Radarr, Prowlarr or Jackett to the internet. Seerr and Plex are fine behind a reverse proxy with HTTPS.
+- Use a VPN if you're downloading from public trackers (above)
+- Keep `.env` out of git. It holds API keys.
 
 ---
 
@@ -393,9 +275,9 @@ services:
 
 **Can this run on a NAS?** Yes — Unraid, TrueNAS SCALE, Synology (with Docker support).
 
-**Why does Plex use a different network mode?** Plex needs "host" networking for local discovery and DLNA. This is normal and expected.
+**Why does Plex use host networking?** Plex needs "host" networking for local discovery and DLNA. This is normal and expected.
 
-**What's Prowlarr vs Jackett?** Prowlarr is the modern replacement. It syncs indexers directly into Sonarr and Radarr. Jackett is older and only included as a fallback for trackers Prowlarr doesn't support yet.
+**What's Prowlarr vs Jackett?** Prowlarr is the modern replacement. It syncs indexers directly into Sonarr and Radarr. Jackett is older and only kept as a fallback for trackers Prowlarr doesn't support yet.
 
 ---
 
