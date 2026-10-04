@@ -16,14 +16,21 @@ trap 'rm -rf "$SNAP"' EXIT
 
 PLEX="plex/Library/Application Support/Plex Media Server"
 EXCLUDES=(
-  --exclude="MediaCover/" --exclude="logs/" --exclude="Logs/" --exclude="Backups/"
+  --exclude="MediaCover/" --exclude=".cache/" --exclude="logs/" --exclude="Logs/" --exclude="Backups/"
   --exclude="/$PLEX/Cache/" --exclude="/$PLEX/Media/" --exclude="/$PLEX/Metadata/"
   --exclude="/$PLEX/Crash Reports/" --exclude="/$PLEX/Updates/"
   --exclude="*-wal" --exclude="*-shm" --exclude="*.db" --exclude="*.sqlite"
 )
 
 # Copy everything except caches and databases into a staging folder...
-rsync -a "${EXCLUDES[@]}" "$APPDATA_PATH/" "$SNAP/$NAME/"
+# Files this user can't read (e.g. root-owned certs of other stacks) are
+# reported and skipped (rsync 23/24) rather than failing the whole backup.
+rc=0; rsync -a "${EXCLUDES[@]}" "$APPDATA_PATH/" "$SNAP/$NAME/" 2>"$SNAP/rsync.err" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  [ "$rc" -eq 23 ] || [ "$rc" -eq 24 ] || { cat "$SNAP/rsync.err" >&2; exit "$rc"; }
+  echo "warn: $(grep -c 'Permission denied' "$SNAP/rsync.err") unreadable path(s) skipped:" >&2
+  grep -o '"[^"]*"' "$SNAP/rsync.err" | sed 's/^/  /' | head -5 >&2
+fi
 
 # ...then add consistent snapshots of the live databases at the same paths.
 cd "$APPDATA_PATH"
@@ -34,4 +41,5 @@ while IFS= read -r -d '' db; do
 done < <(find . \( -path "./$PLEX/Cache" -o -path "./$PLEX/Media" -o -path "./$PLEX/Metadata" \) -prune \
            -o \( -name "*.db" -o -name "*.sqlite" \) -type f -size +0 -print0)
 
+rm -f "$SNAP/rsync.err"
 tar -C "$SNAP" -c "$NAME" | zstd -q -T0 -10
