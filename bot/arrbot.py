@@ -129,9 +129,24 @@ def ago(iso):
     return f"{s / 60:.0f} min ago" if s < 3600 else f"{s / 3600:.0f} h ago" if s < 172800 else f"{s / 86400:.0f} days ago"
 
 
+def chunks(text, size=3900):
+    """Split on line boundaries so HTML tags are never cut (Telegram caps messages at 4096)."""
+    out, cur = [], ""
+    for line in text.split("\n"):
+        while len(line) > size:
+            out.append(line[:size])
+            line = line[size:]
+        if cur and len(cur) + 1 + len(line) > size:
+            out.append(cur)
+            cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    return out + [cur] if cur else out
+
+
 def send(text, chat=None):
-    for i in range(0, len(text), 3900):
-        http_json(f"{TG}/sendMessage", body={"chat_id": chat or ctx["chat"], "text": text[i:i + 3900],
+    for part in chunks(text):
+        http_json(f"{TG}/sendMessage", body={"chat_id": chat or ctx["chat"], "text": part,
                                              "parse_mode": "HTML", "disable_web_page_preview": True})
 
 
@@ -259,15 +274,26 @@ def cmd_leaving(_):
     rows.sort()
     tok = plex_token()
     lines = [f"<b>Leaving soon ({len(rows)})</b> — watch something to keep it"]
-    for due, pid, col in rows[:20]:
-        try:
-            t = http_json(f"{PLEX}/library/metadata/{pid}", {"X-Plex-Token": tok})["MediaContainer"]["Metadata"][0]["title"]
-        except Exception:
-            t = f"Plex item {pid}"
-        lines.append(f"• {esc(t)} — {datetime.fromtimestamp(due).strftime('%d %b')}")
-    if len(rows) > 20:
-        lines.append(f"…and {len(rows) - 20} more")
+    day = None
+    for due, pid, col in rows:
+        when = datetime.fromtimestamp(due).strftime("%a %d %b")
+        if when != day:
+            day = when
+            lines.append(f"\n<b>{when}</b>")
+        lines.append(f"• {esc(plex_title(pid, tok))}")
     return "\n".join(lines)
+
+
+def plex_title(pid, tok):
+    try:
+        m = http_json(f"{PLEX}/library/metadata/{pid}", {"X-Plex-Token": tok})["MediaContainer"]["Metadata"][0]
+    except Exception:
+        return f"Plex item {pid}"
+    if m.get("type") == "season":
+        return f"{m.get('parentTitle', '?')} – {m['title']}"
+    if m.get("type") == "episode":
+        return f"{m.get('grandparentTitle', '?')} S{m.get('parentIndex', 0):02}E{m.get('index', 0):02}"
+    return m["title"] + (f" ({m['year']})" if m.get("type") == "movie" and m.get("year") else "")
 
 
 def cmd_watching(_):
