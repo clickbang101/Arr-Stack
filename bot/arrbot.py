@@ -28,6 +28,25 @@ TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHATS = {c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",") if c.strip()}
 ADMINS = {a.strip() for a in (os.environ.get("TELEGRAM_ADMIN_IDS") or ",".join(c for c in CHATS if not c.startswith("-"))).split(",") if a.strip()}
 ACTIONS = {"restart", "clearstuck", "yes"}
+# Non-admins get DEFAULT commands; TELEGRAM_USER_COMMANDS overrides per person:
+#   "123456=status,search;789012=status,search,leaving,watching"
+DEFAULT = {c.strip() for c in (os.environ.get("TELEGRAM_DEFAULT_COMMANDS") or
+           "status,disk,vpn,downloads,stuck,recent,leaving,search").split(",") if c.strip()}
+PER_USER = {}
+for part in (os.environ.get("TELEGRAM_USER_COMMANDS") or "").split(";"):
+    if "=" in part:
+        uid, cmds = part.split("=", 1)
+        PER_USER[uid.strip()] = {c.strip() for c in cmds.split(",") if c.strip()}
+
+
+def allowed(user, cmd):
+    if cmd in ("help", "start"):
+        return True
+    if user in ADMINS:
+        return True
+    if cmd in ACTIONS:
+        return False
+    return cmd in PER_USER.get(user, DEFAULT)
 APPDATA = os.environ.get("APPDATA_DIR", "/appdata")
 DISKS = {"SSD (system, apps)": APPDATA, "Media disk": os.environ.get("MEDIA_DIR", "/media")}
 PLEX = os.environ.get("PLEX_URL", "http://192.168.198.11:32400")
@@ -319,11 +338,16 @@ def cmd_yes(_):
     return fn()
 
 
+HELP = [("status", "everything at a glance"), ("disk", "disk space"), ("vpn", "VPN location + port"),
+        ("downloads", "what's downloading"), ("stuck", "downloads stuck &gt;24 h"), ("recent", "last 10 added"),
+        ("leaving", "what Maintainerr removes next"), ("watching", "who's streaming"),
+        ("search", "&lt;name&gt; – find a show/movie"), ("restart", "&lt;app&gt; – restart one app (asks to confirm)"),
+        ("clearstuck", "clear stuck downloads (asks to confirm)")]
+
+
 def cmd_help(_):
-    return ("<b>Commands</b>\n/status – everything at a glance\n/disk – disk space\n/vpn – VPN location + port\n"
-            "/downloads – what's downloading\n/stuck – downloads stuck &gt;24 h\n/recent – last 10 added\n"
-            "/leaving – what Maintainerr removes next\n/watching – who's streaming\n/search &lt;name&gt; – find a show/movie\n"
-            "/restart &lt;app&gt; – restart one app (asks to confirm)\n/clearstuck – clear stuck downloads (asks to confirm)")
+    mine = [f"/{c} – {d}" for c, d in HELP if allowed(ctx["user"], c)]
+    return "<b>Your commands</b>\n" + "\n".join(mine)
 
 
 COMMANDS = {"status": cmd_status, "disk": cmd_disk, "vpn": cmd_vpn, "downloads": cmd_downloads, "stuck": cmd_stuck,
@@ -365,8 +389,11 @@ def main():
                 ctx["chat"], ctx["user"] = chat, str(msg.get("from", {}).get("id"))
                 cmd, _, arg = text[1:].partition(" ")
                 cmd = cmd.split("@")[0].lower()
-                if cmd in ACTIONS and ctx["user"] not in ADMINS:
-                    send("🔒 Only the server admin can do that.")
+                who = msg.get("from", {})
+                print(f"/{cmd} from {who.get('first_name', '?')} {who.get('last_name', '')}".rstrip()
+                      + f" (user id {ctx['user']}) in {msg['chat'].get('type')} chat", flush=True)
+                if cmd in COMMANDS and not allowed(ctx["user"], cmd):
+                    send(f"🔒 You don't have access to /{esc(cmd)}. /help shows yours.")
                     continue
                 fn = COMMANDS.get(cmd)
                 try:

@@ -224,6 +224,8 @@ Uptime Kuma (`COMPOSE_PROFILES=monitoring`, web UI on port 3001) can message you
 
 **Family group:** create a Telegram group and add the bot and members. Send `/status` in the group: the bot ignores it but logs the group ID (`docker logs arrbot`). Add that ID to `TELEGRAM_CHAT_ID`, comma-separated, and update the stack. Everyone in the group can use the read-only commands. `/restart` and `/clearstuck` stay limited to `TELEGRAM_ADMIN_IDS`, which defaults to your own chat ID.
 
+**Who can use what:** admins (`TELEGRAM_ADMIN_IDS`) get everything. Everyone else in an allowed chat gets `TELEGRAM_DEFAULT_COMMANDS` (default: `status,disk,vpn,downloads,stuck,recent,leaving,search`; `/watching` is admin-only because it shows who watches what). Per person: `TELEGRAM_USER_COMMANDS="123456=search,leaving;789012=status,search,watching"`. Find someone's ID in `docker logs arrbot` after they send any command. `/help` lists only the commands that person can use.
+
 The bot reads app API keys from their config files (`APPDATA_PATH` mounted read-only) and needs the Docker socket for status and `/restart`. Treat the bot token like a password.
 
 ---
