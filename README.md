@@ -129,7 +129,10 @@ qm set 100 --hostpci0 0000:01:00 --cpu host
 **4. Inside the VM (Ubuntu):**
 
 ```bash
-sudo ubuntu-drivers install --gpgpu        # or: sudo apt install nvidia-headless-550-server nvidia-utils-550-server
+sudo ubuntu-drivers install --gpgpu nvidia:580-server
+sudo apt install nvidia-utils-580-server libnvidia-encode-580-server libnvidia-decode-580-server \
+  linux-modules-nvidia-580-server-$(uname -r) linux-modules-nvidia-580-server-generic
+printf 'blacklist nouveau\noptions nouveau modeset=0\n' | sudo tee /etc/modprobe.d/blacklist-nouveau.conf
 # NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
 sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
 nvidia-smi                                  # shows the GPU
@@ -140,6 +143,11 @@ nvidia-smi                                  # shows the GPU
 - Portainer deploys one file: run `make gpu-config` and paste the output as the stack file.
 
 Check with `docker exec plex nvidia-smi`.
+
+Gotchas we hit:
+- **Emergency mode on the VM's first boot with the GPU.** `nouveau` stalled boot probing the card until `/boot` timed out. Press Ctrl+D to continue, then blacklist nouveau (above).
+- **`nvidia-smi` says it can't talk to the driver.** The `--gpgpu` install skips the kernel module. Install `linux-modules-nvidia-580-server-$(uname -r)`, then `sudo modprobe nvidia`.
+- **Plex decodes on the GPU but encodes with `libx264`.** `libnvidia-encode` is missing. Install `libnvidia-encode-580-server libnvidia-decode-580-server`, then `docker restart plex`.
 
 **6. Plex:** Settings → Transcoder → tick **Use hardware acceleration when available** and **Use hardware-accelerated video encoding**, then pick the GPU. While something transcodes, the Plex dashboard shows **(hw)** and `nvidia-smi` lists the `Plex Transcoder` process.
 
