@@ -393,7 +393,8 @@ Needs a paid Proton plan (Plus or higher). Free Proton blocks P2P.
 **2. Settings:** put it in `.env` (Portainer: stack environment variables). Never commit it.
 ```
 WIREGUARD_PRIVATE_KEY=<the PrivateKey value>
-VPN_COUNTRIES=Netherlands        # comma-separated; gluetun picks a P2P server there
+VPN_COUNTRIES=Netherlands        # comma-separated; gluetun picks a port-forwarding server there
+                                 # e.g. "South Africa" (Johannesburg) — list: docker exec gluetun /gluetun-entrypoint format-servers -protonvpn
 ```
 
 **3. qBittorrent:** Options → Web UI → tick **Bypass authentication for clients on localhost**. gluetun uses this to set the forwarded port. Only gluetun and qBittorrent share that localhost. Also untick UPnP.
