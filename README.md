@@ -137,9 +137,19 @@ After all services are up, you need to connect them together once. Do this in or
 
 Open qBittorrent → Tools → Options → Web UI → change the password from `adminadmin` to something secure.
 
+Then Options → Downloads → tick **Excluded file names** and enter:
+
+```
+*.exe, *.scr, *.lnk, *.bat, *.cmd, *.msi, *.vbs, *.zipx
+```
+
+This blocks fake "episodes" that are really Windows programs. See [Fake releases](#fake-releases-malware-disguised-as-episodes). Don't add `*.rar` or `*.zip`: real releases use them and Unpackerr extracts them.
+
 ### Step 2 — Add indexers in Prowlarr
 
 Open Prowlarr → Indexers → Add Indexer → search for and add the torrent sites you use.
+
+Don't use **LimeTorrents**. In 2026 it supplied every one of the 42 fake `.exe`/`.scr` episodes that got imported into this library. It is disabled in Prowlarr.
 
 ### Step 3 — Connect Prowlarr to Sonarr and Radarr
 
@@ -236,6 +246,15 @@ Check that `DOWNLOADS_PATH` and `MEDIA_PATH` are on the same drive, and that qBi
 **Everything is slow while someone is watching**
 Plex is transcoding. See [CPU limits](#cpu-limits).
 
+**Everything is slow and swap is full**
+Check `pgrep -c chromium`. Dozens means FlareSolverr has leaked browsers: `docker restart flaresolverr`. See [Memory and log limits](#memory-and-log-limits).
+
+**Sonarr queue warning: "No files found are eligible for import"**
+Usually a fake release whose only file was blocked by qBittorrent's excluded file names. In Activity → Queue, remove it and tick **Blocklist Release**. Sonarr then searches for a different release.
+
+**Disk filling faster than expected**
+Downloads that were copied instead of hardlinked into `/media` take up space twice. Remove finished torrents that are already in Plex (qBittorrent → right-click → Remove → also delete files).
+
 ---
 
 ## VPN (recommended for torrenting)
@@ -273,6 +292,41 @@ Supported providers: Mullvad, ProtonVPN, NordVPN, and many more. See [Gluetun's 
 - Don't expose qBittorrent, Sonarr, Radarr, Prowlarr or Jackett to the internet. Seerr and Plex are fine behind a reverse proxy with HTTPS.
 - Use a VPN if you're downloading from public trackers (above)
 - Keep `.env` out of git. It holds API keys.
+
+### Fake releases (malware disguised as episodes)
+
+Some public indexers serve torrents named like a new episode (`The Boys S05E03 1080p … .exe`) that contain a Windows program instead of a video. Sonarr imports them as if they were the episode. They can't run on this Linux host, but they are malware for any Windows PC that opens them, and Sonarr then treats the episode as downloaded so the real one is never fetched.
+
+**Prevention** (both should already be set):
+1. qBittorrent → Options → Downloads → **Excluded file names**: `*.exe, *.scr, *.lnk, *.bat, *.cmd, *.msi, *.vbs, *.zipx`. Matching files are skipped and real files are unaffected. A torrent that is *only* a fake finishes empty, and Sonarr shows "No files found are eligible for import" (remove and blocklist it).
+2. Disable the indexer supplying them in Prowlarr (LimeTorrents, 2026).
+
+**Check for them** (on the host):
+
+```bash
+cd ~/share && find downloads media -xdev -type f \( -iname "*.exe" -o -iname "*.scr" \)
+```
+
+`RARBG_DO_NOT_MIRROR.exe` (99 bytes) is a harmless text placeholder from old RARBG releases. Deleting it is fine.
+
+**Which indexer sent them**. Read-only query of Sonarr's history:
+
+```bash
+sqlite3 -readonly "file:$HOME/appdata/sonarr/sonarr.db?mode=ro" \
+  "select json_extract(Data,'$.indexer'), count(*) from History where EventType=1 and DownloadId in
+   (select DownloadId from History where EventType=3 and (json_extract(Data,'$.importedPath') like '%.exe'
+    or json_extract(Data,'$.importedPath') like '%.scr')) group by 1;"
+```
+
+**Clean up**. Do these in order, or Sonarr re-downloads the fakes:
+1. Disable the offending indexer in Prowlarr, and confirm the qBittorrent exclusions are set.
+2. Delete the files:
+   ```bash
+   cd ~/share && find downloads media -xdev -type f \( -iname "*.exe" -o -iname "*.scr" \) -delete
+   ```
+   "Permission denied" means the folder is owned by `root` (left over from an older setup). Re-run that one with `sudo rm`.
+3. qBittorrent: remove torrents that now show **Missing files**.
+4. Sonarr: make sure Settings → Media Management → **Unmonitor Deleted Episodes** is off, then Wanted → Missing → **Search All**.
 
 ---
 
