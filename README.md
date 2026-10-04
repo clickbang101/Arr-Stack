@@ -142,7 +142,7 @@ nvidia-smi                                  # shows the GPU
 
 **5. Compose:** `docker-compose.nvidia.yml` gives Plex the GPU.
 - CLI: `make up GPU=nvidia`
-- Portainer deploys one file: run `make gpu-config` and paste the output as the stack file.
+- Portainer deploys one file: run `make gpu-config` (or `make portainer-config ADDONS="nvidia vpn"`) and paste the output as the stack file.
 
 Check with `docker exec plex nvidia-smi`.
 
@@ -376,32 +376,40 @@ Downloads that were copied instead of hardlinked into `/media` take up space twi
 
 ---
 
-## VPN (recommended for torrenting)
+## VPN for qBittorrent (Proton VPN)
 
-If you're using public trackers, routing qBittorrent through a VPN is strongly recommended. Create a `docker-compose.override.yml` file (not tracked by git) with:
+Without a VPN, every peer in every swarm sees your home IP. `docker-compose.vpn.yml` sends **only qBittorrent** through Proton VPN with **gluetun**. Plex and the apps keep the normal connection.
 
-```yaml
-services:
-  gluetun:
-    image: qmcgaw/gluetun
-    container_name: gluetun
-    cap_add:
-      - NET_ADMIN
-    environment:
-      - VPN_SERVICE_PROVIDER=your_provider
-      - OPENVPN_USER=your_username
-      - OPENVPN_PASSWORD=your_password
-    ports:
-      - ${QBITTORRENT_PORT}:${QBITTORRENT_PORT}
+- **Kill switch:** qBittorrent has no network except the tunnel. If the VPN drops, torrents stop; they never fall back to your real IP.
+- **Port forwarding:** Proton hands out a port, and gluetun sets it in qBittorrent automatically, so you stay connectable. A router port forward is **not** needed (remove the old 6881 forward).
+- **No app changes:** gluetun answers to the name `qbittorrent` on `arr-net` and publishes the web UI port, so Sonarr, Radarr and Prowlarr keep their settings.
 
-  qbittorrent:
-    network_mode: "service:gluetun"
-    ports: []
-    depends_on:
-      - gluetun
+Needs a paid Proton plan (Plus or higher). Free Proton blocks P2P.
+
+**1. Proton key:** account.protonvpn.com → **Downloads → WireGuard configuration**:
+- Platform **Router** (or GNU/Linux), **NAT-PMP (Port Forwarding) ON**, VPN Accelerator on.
+- Pick any **P2P** server and **Create**. From the file, copy only the `PrivateKey = …` value.
+
+**2. Settings:** put it in `.env` (Portainer: stack environment variables). Never commit it.
+```
+WIREGUARD_PRIVATE_KEY=<the PrivateKey value>
+VPN_COUNTRIES=Netherlands        # comma-separated; gluetun picks a P2P server there
 ```
 
-Supported providers: Mullvad, ProtonVPN, NordVPN, and many more. See [Gluetun's wiki](https://github.com/qdm12/gluetun/wiki).
+**3. qBittorrent:** Options → Web UI → tick **Bypass authentication for clients on localhost**. gluetun uses this to set the forwarded port. Only gluetun and qBittorrent share that localhost. Also untick UPnP.
+
+**4. Deploy:**
+- CLI: `make up ADDONS=vpn` (with the GPU add-on: `ADDONS="nvidia vpn"`)
+- Portainer: `make portainer-config ADDONS="nvidia vpn"` and paste the output as the stack file.
+
+**Check it:**
+```bash
+docker logs gluetun 2>&1 | grep -iE "public ip|port forward"     # Proton IP + forwarded port
+docker exec qbittorrent wget -qO- https://ipinfo.io/ip             # must NOT be your home IP
+```
+In qBittorrent, Options → Connection shows the forwarded port, and the status bar icon turns green.
+
+**If qBittorrent is unreachable:** `docker logs gluetun`. Usually it's a wrong key, or port forwarding was off when the WireGuard config was created (create a new one with NAT-PMP on).
 
 ---
 

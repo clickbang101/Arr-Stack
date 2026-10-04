@@ -1,8 +1,10 @@
-# GPU=nvidia adds docker-compose.nvidia.yml (Plex hardware transcoding)
+# Add-ons: ADDONS="nvidia vpn" adds docker-compose.nvidia.yml / docker-compose.vpn.yml.
+# GPU=nvidia is kept as a shortcut for ADDONS=nvidia.
 GPU ?=
-COMPOSE ?= docker compose -f docker-compose.yml $(if $(GPU),-f docker-compose.$(GPU).yml)
+ADDONS ?= $(GPU)
+COMPOSE ?= docker compose -f docker-compose.yml $(foreach a,$(ADDONS),-f docker-compose.$(a).yml)
 
-.PHONY: up down restart logs pull update ps network setup gpu-config backup
+.PHONY: up down restart logs pull update ps network setup gpu-config portainer-config backup
 
 up: network
 	$(COMPOSE) up -d
@@ -37,11 +39,10 @@ backup:
 	@set -a; . ./.env; set +a; mkdir -p backups; \
 	  scripts/backup-appdata.sh > backups/appdata-$$(date +%F).tar.zst && ls -lh backups | tail -1
 
-# Print docker-compose.yml with the NVIDIA add-on inserted into the plex and
-# tdarr services, ${VARS} kept, for pasting into Portainer (which deploys a
-# single file). Text insert on purpose: `docker compose config --no-interpolate`
-# turns bind mounts into named volumes.
+# One merged compose file (main + ADDONS) for pasting into Portainer, which
+# deploys a single file. ${VARS} are kept for Portainer's environment variables.
+portainer-config:
+	@python3 scripts/portainer-config.py $(ADDONS)
+
 gpu-config:
-	@awk '/^  (plex|tdarr):$$/{p=1} {print} \
-	  p && /^    cpus:/{print "    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: all\n              capabilities: [gpu]"} \
-	  p && /- TZ=/{print "      - NVIDIA_VISIBLE_DEVICES=all\n      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility"; p=0}' docker-compose.yml
+	@python3 scripts/portainer-config.py nvidia

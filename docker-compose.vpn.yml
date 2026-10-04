@@ -1,0 +1,55 @@
+# Optional add-on: route ONLY qBittorrent through a VPN (Proton VPN via gluetun).
+# - Kill switch: qBittorrent has no network except the tunnel. If the VPN drops,
+#   torrents stop instead of leaking your home IP.
+# - Proton port forwarding: gluetun gets a port from Proton and sets it in
+#   qBittorrent automatically (needs "Bypass authentication for clients on
+#   localhost" ticked in qBittorrent → Options → Web UI).
+# - Sonarr/Radarr/Prowlarr keep using host "qbittorrent": gluetun answers to that
+#   name on arr-net and publishes the web UI port.
+#   CLI:       make up ADDONS=vpn        (or ADDONS="nvidia vpn")
+#   Portainer: make portainer-config ADDONS="nvidia vpn" and paste the output.
+# See README "VPN for qBittorrent".
+
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      arr-net:
+        aliases: [qbittorrent]
+    ports:
+      - ${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}
+    environment:
+      TZ: ${TZ:-UTC}
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:?set WIREGUARD_PRIVATE_KEY (Proton WireGuard config) in .env}
+      SERVER_COUNTRIES: ${VPN_COUNTRIES:-Netherlands}
+      PORT_FORWARD_ONLY: "on"
+      VPN_PORT_FORWARDING: "on"
+      VPN_PORT_FORWARDING_UP_COMMAND: >-
+        /bin/sh -c 'wget -q -O- --retry-connrefused
+        --post-data "json={\"listen_port\":{{PORTS}}}"
+        http://127.0.0.1:${QBITTORRENT_PORT:-8080}/api/v2/app/setPreferences'
+      # Let other containers and the LAN reach the qBittorrent web UI
+      FIREWALL_INPUT_PORTS: ${QBITTORRENT_PORT:-8080}
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/gluetun:/gluetun
+
+  qbittorrent:
+    network_mode: service:gluetun
+    networks: !reset {}
+    ports: !reset []
+    depends_on:
+      gluetun:
+        condition: service_healthy
