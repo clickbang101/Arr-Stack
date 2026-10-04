@@ -188,17 +188,31 @@ Tdarr re-encodes files you already have, e.g. H.264 → HEVC, which typically sa
 
 ## Backups
 
-`APPDATA_PATH` is the only thing you need to rebuild the stack. Media can be re-downloaded. Stop the stack first so the SQLite databases are consistent:
+App settings and databases live in `APPDATA_PATH` (a few GB). Media can be re-downloaded; settings can't, so back these up **to a different disk**.
+
+`scripts/backup-appdata.sh` streams a compressed archive of `APPDATA_PATH` to stdout. It's safe while the stack is running: every SQLite database (Sonarr, Radarr, Prowlarr, Plex, …) is snapshotted with `sqlite3 .backup`, and caches, logs and artwork are skipped. The result is about 1 GB here.
 
 ```bash
-make down
-sudo tar czf appdata-$(date +%F).tgz -C /home/supervisor appdata
-make up
+make backup                                     # -> backups/appdata-YYYY-MM-DD.tar.zst
+zstd -dc appdata-DATE.tar.zst | tar -x -C /home/supervisor   # restore (stack stopped)
 ```
 
-Also keep a copy of your `.env` somewhere safe outside the repo.
+Needs `sqlite3`, `rsync` and `zstd` on the host.
 
----
+### Nightly backup pulled by another machine
+
+Let another box (here the Proxmox host, whose SSD is separate from the media disk) **pull** the backup, so the Docker host never needs access to it:
+
+1. On the Docker host, install the script, e.g. `install -m 755 scripts/backup-appdata.sh ~/bin/`.
+2. Add the backup machine's public key to `~/.ssh/authorized_keys` **locked to that one command**:
+   ```
+   command="APPDATA_PATH=/home/supervisor/appdata ~/bin/backup-appdata.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-rsa AAAA... root@prox
+   ```
+3. On the backup machine, add `/etc/cron.d/arr-backup` (04:00 daily, keep 7):
+   ```
+   0 4 * * * root mkdir -p /root/arr-backups && ssh -o BatchMode=yes supervisor@192.168.198.11 > /root/arr-backups/appdata-$(date +\%F).tar.zst && find /root/arr-backups -name 'appdata-*.tar.zst' -mtime +7 -delete
+   ```
+Check it every so often: `ls -lh /root/arr-backups` should show a new ~1 GB file each day.
 
 ## First-time wiring
 

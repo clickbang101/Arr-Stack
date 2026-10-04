@@ -2,7 +2,7 @@
 GPU ?=
 COMPOSE ?= docker compose -f docker-compose.yml $(if $(GPU),-f docker-compose.$(GPU).yml)
 
-.PHONY: up down restart logs pull update ps network setup gpu-config
+.PHONY: up down restart logs pull update ps network setup gpu-config backup
 
 up: network
 	$(COMPOSE) up -d
@@ -31,6 +31,11 @@ network:
 
 setup:
 	@bash setup.sh
+
+# Consistent, compressed backup of APPDATA_PATH (safe while running)
+backup:
+	@set -a; . ./.env; set +a; mkdir -p backups; \
+	  scripts/backup-appdata.sh > backups/appdata-$$(date +%F).tar.zst && ls -lh backups | tail -1
 
 # Print docker-compose.yml with the NVIDIA add-on inserted into the plex and
 # tdarr services, ${VARS} kept, for pasting into Portainer (which deploys a

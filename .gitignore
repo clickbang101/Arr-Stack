@@ -29,3 +29,4 @@ node_modules/
 # Personal planning notes and Claude Code project config (kept local)
 .planning/
 .claude/
+backups/
