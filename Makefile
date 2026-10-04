@@ -32,7 +32,11 @@ network:
 setup:
 	@bash setup.sh
 
-# Print docker-compose.yml merged with the NVIDIA add-on, ${VARS} kept, for
-# pasting into Portainer (which deploys a single file)
+# Print docker-compose.yml with the NVIDIA add-on inserted into the plex service,
+# ${VARS} kept, for pasting into Portainer (which deploys a single file).
+# Text insert on purpose: `docker compose config --no-interpolate` turns bind
+# mounts into named volumes.
 gpu-config:
-	@docker compose -f docker-compose.yml -f docker-compose.nvidia.yml config --no-interpolate
+	@awk '/^  plex:/{p=1} {print} \
+	  p && /^    cpus:/{print "    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: all\n              capabilities: [gpu]"} \
+	  p && /- VERSION=docker/{print "      - NVIDIA_VISIBLE_DEVICES=all\n      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility"; p=0}' docker-compose.yml
