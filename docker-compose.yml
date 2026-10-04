@@ -233,3 +233,36 @@ services:
     environment:
       - LOG_LEVEL=info
       - TZ=${TZ:-UTC}
+
+  # Optional: re-encodes the library to save space (e.g. H.264 -> HEVC) and strips
+  # unwanted audio/subtitle tracks. Off unless COMPOSE_PROFILES includes "tdarr".
+  # With docker-compose.nvidia.yml it encodes on the GPU. See README "Tdarr".
+  tdarr:
+    image: ghcr.io/haveagitgat/tdarr:latest
+    container_name: tdarr
+    restart: unless-stopped
+    logging: *logging
+    profiles: ["tdarr"]
+    networks: [arr-net]
+    cpus: ${TDARR_CPUS:-2}
+    ports:
+      - ${TDARR_PORT:-8265}:8265
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+      - serverIP=0.0.0.0
+      - serverPort=8266
+      - webUIPort=8265
+      - internalNode=true
+      - inContainer=true
+      - ffmpegVersion=7
+      - nodeName=InternalNode
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/tdarr/server:/app/server
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/tdarr/configs:/app/configs
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/tdarr/logs:/app/logs
+      - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media
+      # Work folder on the same filesystem as media, so finished files are
+      # moved into place instantly instead of copied.
+      - ${DATA_PATH:?set DATA_PATH in .env}/tdarr-cache:/temp

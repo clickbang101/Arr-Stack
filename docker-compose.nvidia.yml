@@ -1,4 +1,5 @@
-# Optional add-on: NVIDIA GPU hardware transcoding for Plex (needs Plex Pass).
+# Optional add-on: NVIDIA GPU for Plex hardware transcoding (needs Plex Pass)
+# and for Tdarr encoding (when the tdarr profile is on).
 # Requires the NVIDIA driver and NVIDIA Container Toolkit on the Docker host.
 # See README "Hardware transcoding (NVIDIA)".
 #   CLI:       make up GPU=nvidia
@@ -6,6 +7,18 @@
 
 services:
   plex:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  tdarr:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility

@@ -79,7 +79,9 @@ info "Creating directories (existing ones are left alone)..."
 mkdir -p \
   "${MEDIA_PATH}" \
   "${DOWNLOADS_PATH}" \
-  "${APPDATA_PATH}"/{plex,tautulli,overseerr,maintainerr,sonarr,radarr,bazarr,prowlarr,jackett,qbittorrent}
+  "${DATA_PATH}/tdarr-cache" \
+  "${APPDATA_PATH}"/{plex,tautulli,overseerr,maintainerr,sonarr,radarr,bazarr,prowlarr,jackett,qbittorrent} \
+  "${APPDATA_PATH}"/tdarr/{server,configs,logs}
 
 # Only fix ownership of the app data root's top level, so a restore of a large
 # library doesn't trigger a slow recursive chown.

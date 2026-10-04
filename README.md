@@ -85,6 +85,8 @@ Everything is in `.env` (copied from `.env.example`). `.env` is git-ignored. Nev
 | `*_PORT` | Web UI ports |
 | `PLEX_CPUS`, `UNPACKERR_CPUS`, `FLARESOLVERR_CPUS` | CPU caps (see below) |
 | `FLARESOLVERR_MEM` | FlareSolverr memory cap (see below) |
+| `COMPOSE_PROFILES` | Optional services to turn on, e.g. `tdarr` |
+| `TDARR_PORT`, `TDARR_CPUS` | Tdarr web UI port and CPU cap |
 | `SONARR_API_KEY`, `RADARR_API_KEY` | Used by Unpackerr |
 
 After editing: `make up` (CLI) or **Update the stack** in Portainer.
@@ -160,6 +162,27 @@ Consumer NVIDIA cards limit the number of simultaneous NVENC encodes (currently 
 **FlareSolverr** leaks Chromium processes over days. On this host it once reached 77 open browsers, filled the 4 GB swap and slowed everything down. It is capped at `FLARESOLVERR_MEM` (default `1g`, no swap). When it hits the cap the kernel kills the leaked browsers inside the container, and the rest of the host is unaffected. If indexer searches through FlareSolverr start failing, `docker restart flaresolverr` clears it.
 
 **Logs**: Docker's default logging never rotates. Every service keeps at most 3 × 10 MB of logs (the `x-logging` block at the top of `docker-compose.yml`). The cap only applies to containers created after the change, so it takes effect on the next stack update.
+
+---
+
+## Tdarr (optional: shrink the library)
+
+Tdarr re-encodes files you already have, e.g. H.264 → HEVC, which typically saves 40–50%. It can also strip unwanted audio and subtitle languages, which is lossless and fast. It's off by default.
+
+**Turn it on:** set `COMPOSE_PROFILES=tdarr` in `.env` (Portainer: add it as an environment variable), then `make up` or update the stack. With the NVIDIA add-on (`GPU=nvidia` / `make gpu-config`) Tdarr also gets the GPU. Web UI: `http://<host>:8265`.
+
+**Set up in the UI:**
+1. **Libraries → add**: source `/media/tv` (and/or `/media/movies`), transcode cache `/temp`.
+2. Pick a flow/plugins. Start with: remove unwanted audio/subtitle languages, then transcode H.264 → HEVC with **NVENC** (`hevc_nvenc`). Skip files that are already HEVC.
+3. **Schedule**: allow work only at night (e.g. 01:00–07:00), so Plex keeps the GPU in the evening.
+4. Start with **one show**, check the results on a real TV, then add the rest.
+
+**Read this first:**
+- **No undo.** Tdarr replaces the originals. Test before running it on everything, and keep backups of anything you can't re-download.
+- **GTX 10-series NVENC** makes smaller files at a quality a step below CPU x265. Fine for TV; consider excluding favourite films.
+- **Hardlinks.** A re-encoded file is a new file. If its torrent is still seeding, the old copy stays in `downloads/` and you briefly use *more* space. Only process files older than your seeding time (qBittorrent here: 3 days), e.g. with a file-age filter in the flow.
+- After Tdarr changes files, Sonarr/Radarr pick them up on their next disk scan (or run **Refresh & Scan**).
+- The work folder is `DATA_PATH/tdarr-cache`, on the same disk as media, so finished files move into place instantly.
 
 ---
 
