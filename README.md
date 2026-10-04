@@ -173,14 +173,15 @@ Tdarr re-encodes files you already have, e.g. H.264 → HEVC, which typically sa
 
 **Set up in the UI:**
 1. **Libraries → add**: source `/media/tv` (and/or `/media/movies`), transcode cache `/temp`.
-2. Pick a flow/plugins. Start with: remove unwanted audio/subtitle languages, then transcode H.264 → HEVC with **NVENC** (`hevc_nvenc`). Skip files that are already HEVC.
+2. Pick a flow/plugins. A classic plugin stack that works on a GTX 1050: *Migz Clean Audio Streams* (keep e.g. `eng,jpn,und`), *Migz Transcode Using Nvidia GPU & FFMPEG* (container `original`, B-frames off, force conform on; already-HEVC files are skipped), then *New file size check*. Node workers: 1 GPU transcode, 0 CPU, 0 health checks.
 3. **Schedule**: allow work only at night (e.g. 01:00–07:00), so Plex keeps the GPU in the evening.
 4. Start with **one show**, check the results on a real TV, then add the rest.
 
 **Read this first:**
 - **No undo.** Tdarr replaces the originals. Test before running it on everything, and keep backups of anything you can't re-download.
 - **GTX 10-series NVENC** makes smaller files at a quality a step below CPU x265. Fine for TV; consider excluding favourite films.
-- **Hardlinks.** A re-encoded file is a new file. If its torrent is still seeding, the old copy stays in `downloads/` and you briefly use *more* space. Only process files older than your seeding time (qBittorrent here: 3 days), e.g. with a file-age filter in the flow.
+- **Hardlinks.** A re-encoded file is a new file. If its torrent is still seeding, the old copy stays in `downloads/` and you briefly use *more* space. Turn on the library option **Skip hardlinked files** (`filterHardlinked`) so files that are still seeding are left alone.
+- **Staging.** By default Tdarr does *not* replace originals: finished files wait in **Staged** (in the cache folder) until you accept them, or until you turn on *Auto accept successful transcodes* in Options. Handy for a test run, but the cache fills up if you never accept.
 - After Tdarr changes files, Sonarr/Radarr pick them up on their next disk scan (or run **Refresh & Scan**).
 - The work folder is `DATA_PATH/tdarr-cache`, on the same disk as media, so finished files move into place instantly.
 
