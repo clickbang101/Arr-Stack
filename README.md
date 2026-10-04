@@ -186,6 +186,23 @@ Tdarr re-encodes files you already have, e.g. H.264 → HEVC, which typically sa
 
 ---
 
+## Monitoring and alerts (optional)
+
+Uptime Kuma (`COMPOSE_PROFILES=monitoring`, web UI on port 3001) can message you (Telegram, Discord, email, ntfy…) when something breaks. A useful set of monitors:
+
+- **Docker Container** monitors for every container. The Docker socket is mounted read-only. They fail when a container stops or reports *unhealthy*, which includes gluetun losing the VPN.
+- **HTTP** monitors: `http://<host>:32400/identity` (Plex), `http://sonarr:8989/ping`, `http://radarr:7878/ping`, `http://prowlarr:9696/ping`, `http://seerr:5055/api/v1/status`, `http://qbittorrent:8080`.
+- **Push** monitors for things only the host knows:
+  - **Disk space:** a cron job every 5 minutes pushes "up" only while every disk is under 90%:
+    ```bash
+    */5 * * * * [ $(df --output=pcent / | tail -1 | tr -dc 0-9) -lt 90 ] && curl -fsS "http://localhost:3001/api/push/<token>?status=up" >/dev/null
+    ```
+  - **Nightly backup:** append `&& curl -fsS "http://<host>:3001/api/push/<token>?status=up"` to the backup cron line, and set the monitor's interval to about 25 h.
+
+**Telegram:** create a bot with @BotFather, send it a message, then in Kuma: Settings → Notifications → Telegram (bot token + chat ID). Set it as default for all monitors.
+
+---
+
 ## Backups
 
 App settings and databases live in `APPDATA_PATH` (a few GB). Media can be re-downloaded; settings can't, so back these up **to a different disk**.
