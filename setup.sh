@@ -61,8 +61,16 @@ fi
 # shellcheck disable=SC1090
 set -a; source "$ENV_FILE"; set +a
 
-for var in APPDATA_PATH MEDIA_PATH DOWNLOADS_PATH; do
+for var in APPDATA_PATH DATA_PATH MEDIA_PATH DOWNLOADS_PATH; do
   [ -n "${!var:-}" ] || error "$var is empty in $ENV_FILE"
+done
+
+# Hardlinked imports only work if both folders live inside DATA_PATH.
+for var in MEDIA_PATH DOWNLOADS_PATH; do
+  case "${!var%/}/" in
+    "${DATA_PATH%/}"/*) ;;
+    *) warn "$var is not inside DATA_PATH — imports will copy instead of hardlink" ;;
+  esac
 done
 
 # ── directories ───────────────────────────────────────────────────────────────

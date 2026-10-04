@@ -79,8 +79,9 @@ Everything is in `.env` (copied from `.env.example`). `.env` is git-ignored. Nev
 | `PUID` / `PGID` | User the containers run as (`id` on the host) |
 | `TZ` | Timezone |
 | `APPDATA_PATH` | Container configs and databases. **Back this up.** |
-| `MEDIA_PATH` | Final library (Plex, Sonarr, Radarr, Bazarr) |
-| `DOWNLOADS_PATH` | Torrent downloads |
+| `DATA_PATH` | Folder holding `media/` and `downloads/`. Sonarr, Radarr, Bazarr and Unpackerr see it as `/data` |
+| `MEDIA_PATH` | Final library (`DATA_PATH/media`). Plex sees it as `/media` |
+| `DOWNLOADS_PATH` | Torrent downloads (`DATA_PATH/downloads`). qBittorrent sees it as `/downloads` |
 | `*_PORT` | Web UI ports |
 | `PLEX_CPUS`, `UNPACKERR_CPUS`, `FLARESOLVERR_CPUS` | CPU caps (see below) |
 | `FLARESOLVERR_MEM` | FlareSolverr memory cap (see below) |
@@ -170,9 +171,11 @@ Sonarr → Settings → Download Clients → Add → qBittorrent
 | Username | `admin` |
 | Password | *(the one you just set)* |
 
-Then: Settings → Media Management → Root Folders → add `/media`
+Then:
+- Settings → Media Management → Root Folders → add `/data/media/tv` (Radarr: `/data/media/movies`)
+- Settings → Download Clients → **Remote Path Mappings** → add: Host `qbittorrent`, Remote Path `/downloads/`, Local Path `/data/downloads/`
 
-Repeat for Radarr.
+Repeat for Radarr. The mapping tells Sonarr/Radarr where qBittorrent's files are inside `/data`, so imports are hardlinks. See [Hardlinks](#hardlinks-why-data).
 
 ### Step 5 — Set up Bazarr (subtitles)
 
@@ -222,7 +225,36 @@ In Portainer: **Stacks → arr-stack → Pull and redeploy** does the same as `m
     └── downloads/      ← in-progress downloads
 ```
 
-Keep `media` and `downloads` on the same filesystem so Sonarr/Radarr can move files instantly instead of copying.
+Keep `media` and `downloads` inside one folder (`DATA_PATH`) on the same filesystem. See below.
+
+### Hardlinks (why `/data`)
+
+When Sonarr/Radarr import a finished download, they try a **hardlink**: the same file appears in both `downloads/` and `media/` while using disk space once, and the torrent keeps seeding. Hardlinks only work inside a single container mount. With separate `/downloads` and `/media` mounts every import silently becomes a **full copy**, and the downloads folder grows into a second copy of your library (on this server: 1.1 TB).
+
+So Sonarr, Radarr, Bazarr and Unpackerr mount `DATA_PATH` as `/data`, and qBittorrent keeps `/downloads`. A Remote Path Mapping (`/downloads/` → `/data/downloads/`) connects the two.
+
+**Check it's working.** After an import, on the host:
+
+```bash
+stat -c '%h %n' "$MEDIA_PATH/tv/<Show>/<file>.mkv"   # 2 or more = hardlinked, 1 = copied
+```
+
+### Moving an existing install to `/data`
+
+Do this at a quiet time. Nothing is moved or deleted on disk; only paths inside the apps change.
+
+1. Back up `APPDATA_PATH/sonarr` and `APPDATA_PATH/radarr` (stop the containers, or copy the `.db` files plus their `-wal` and `-shm` files).
+2. Add `DATA_PATH` to `.env`, then **Update the stack** in Portainer or run `make up`.
+3. **Sonarr:**
+   - Settings → Media Management → Root Folders → add `/data/media/tv`.
+   - Settings → Download Clients → Remote Path Mappings → add Host `qbittorrent`, Remote `/downloads/`, Local `/data/downloads/`.
+   - Series → **Select Series** → select all → **Edit** → Root Folder `/data/media/tv` → when asked to move files, choose **No**. The files are already there; this only changes the path Sonarr stores.
+   - Remove the old `/media/tv` root folder.
+4. **Radarr:** same steps with `/data/media/movies` (Movies → Select Movies → Edit).
+5. Wait for the next import and run the `stat` check above.
+6. Once nothing in Sonarr/Radarr uses `/media` any more, remove the `MEDIA_PATH:/media` lines from the sonarr and radarr services. Bazarr keeps working because it also has `/data`.
+
+Files that were already copied stay as copies. Free that space by removing finished torrents in qBittorrent (Remove → also delete files).
 
 ---
 
@@ -238,7 +270,7 @@ The stack has no `.env` loaded. On the CLI, create `.env`. In Portainer, load it
 `docker logs <name>`. Usually a missing directory or wrong `PUID`/`PGID` ownership.
 
 **Sonarr/Radarr not importing**
-Check that `DOWNLOADS_PATH` and `MEDIA_PATH` are on the same drive, and that qBittorrent's save path is under `/downloads`.
+Usually the Remote Path Mapping is missing (`qbittorrent`, `/downloads/` → `/data/downloads/`), so the app can't find the file. Also check that qBittorrent's save path is under `/downloads`. See [Hardlinks](#hardlinks-why-data).
 
 **Plex can't find media**
 `docker exec plex ls /media`. If it's empty, `MEDIA_PATH` is wrong.

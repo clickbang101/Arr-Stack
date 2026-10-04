@@ -95,7 +95,12 @@ services:
       - TZ=${TZ:-UTC}
     volumes:
       - ${APPDATA_PATH:?set APPDATA_PATH in .env}/sonarr:/config
-      - ${DOWNLOADS_PATH:?set DOWNLOADS_PATH in .env}:/downloads
+      # One mount holding both downloads/ and media/, so imports are instant
+      # hardlinks instead of copies. Needs a Remote Path Mapping in the app:
+      # host qbittorrent, /downloads/ -> /data/downloads/ (see README).
+      - ${DATA_PATH:?set DATA_PATH in .env}:/data
+      # Old library path. Keep until every series/movie has been moved to the
+      # /data/media root folder, then remove.
       - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media
 
   radarr:
@@ -112,7 +117,12 @@ services:
       - TZ=${TZ:-UTC}
     volumes:
       - ${APPDATA_PATH:?set APPDATA_PATH in .env}/radarr:/config
-      - ${DOWNLOADS_PATH:?set DOWNLOADS_PATH in .env}:/downloads
+      # One mount holding both downloads/ and media/, so imports are instant
+      # hardlinks instead of copies. Needs a Remote Path Mapping in the app:
+      # host qbittorrent, /downloads/ -> /data/downloads/ (see README).
+      - ${DATA_PATH:?set DATA_PATH in .env}:/data
+      # Old library path. Keep until every series/movie has been moved to the
+      # /data/media root folder, then remove.
       - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media
 
   bazarr:
@@ -129,6 +139,8 @@ services:
       - TZ=${TZ:-UTC}
     volumes:
       - ${APPDATA_PATH:?set APPDATA_PATH in .env}/bazarr:/config
+      # Bazarr uses the paths Sonarr/Radarr report, so it needs the same mounts.
+      - ${DATA_PATH:?set DATA_PATH in .env}:/data
       - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media
 
   prowlarr:
@@ -198,6 +210,8 @@ services:
       - UN_RADARR_0_URL=http://radarr:7878
       - UN_RADARR_0_API_KEY=${RADARR_API_KEY}
     volumes:
+      # Unpackerr extracts at the path Sonarr/Radarr report (/data/downloads/...).
+      - ${DATA_PATH:?set DATA_PATH in .env}:/data
       - ${DOWNLOADS_PATH:?set DOWNLOADS_PATH in .env}:/downloads
 
   # Headless Chrome for Cloudflare-protected indexers; spikes CPU per solve.
