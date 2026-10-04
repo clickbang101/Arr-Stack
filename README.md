@@ -91,7 +91,7 @@ After editing: `make up` (CLI) or **Update the stack** in Portainer.
 
 ### CPU limits
 
-The host is a 4-vCPU VM with **no GPU**, so Plex transcodes in software, and one 1080p→720p transcode can use every core. To keep the rest of the stack responsive:
+The host is a 4-vCPU VM. Without [hardware transcoding](#hardware-transcoding-nvidia), Plex transcodes in software, and one 1080p→720p transcode can use every core. To keep the rest of the stack responsive:
 
 | Container | Default cap | Why |
 |-----------|-------------|-----|
@@ -99,14 +99,53 @@ The host is a 4-vCPU VM with **no GPU**, so Plex transcodes in software, and one
 | Unpackerr | 1 core | RAR/ZIP extraction |
 | FlareSolverr | 1 core | Headless Chrome per Cloudflare solve |
 
-A capped Plex can still buffer on heavy transcodes. To cut transcode load at the source, set clients to **Original/Maximum** quality, and limit simultaneous transcodes in Plex → Settings → Transcoder. A real fix is GPU passthrough plus a Plex Pass. Add the device in a `docker-compose.override.yml`:
+A capped Plex can still buffer on heavy transcodes. To cut transcode load at the source, set clients to **Original/Maximum** quality, and limit simultaneous transcodes in Plex → Settings → Transcoder. The real fix is hardware transcoding (below), which needs **Plex Pass**.
 
-```yaml
-services:
-  plex:
-    devices:
-      - /dev/dri:/dev/dri
+### Hardware transcoding (NVIDIA)
+
+A GTX 1050 or newer decodes and encodes H.264 and HEVC (including 10-bit) on the GPU, so transcodes barely touch the CPU. Plex only uses it with **Plex Pass**. This setup runs Docker in a Proxmox VM, so the card is passed through to the VM.
+
+**1. BIOS (Proxmox host):** enable **VT-d** (MSI: OC → CPU Features → Intel VT-D Technology). Check on the host with `ls /sys/kernel/iommu_groups | wc -l`. It must be more than 0.
+
+**2. Proxmox host: give the card to vfio instead of nouveau.** Get the IDs with `lspci -nn | grep -i nvidia` (GTX 1050: `10de:1c81`, audio `10de:0fb9`):
+
+```bash
+echo "options vfio-pci ids=10de:1c81,10de:0fb9" > /etc/modprobe.d/vfio.conf
+printf "blacklist nouveau\nblacklist nvidiafb\n" > /etc/modprobe.d/blacklist-gpu.conf
+update-initramfs -u -k all && reboot
+lspci -k -s 01:00   # after reboot: "Kernel driver in use: vfio-pci"
 ```
+
+The kernel command line needs `intel_iommu=on iommu=pt`.
+
+**3. Proxmox VM:** with the VM stopped:
+
+```bash
+qm set 100 --hostpci0 0000:01:00 --cpu host
+```
+
+`--cpu host` also exposes AVX2 for faster software transcoding.
+
+**4. Inside the VM (Ubuntu):**
+
+```bash
+sudo ubuntu-drivers install --gpgpu        # or: sudo apt install nvidia-headless-550-server nvidia-utils-550-server
+# NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+nvidia-smi                                  # shows the GPU
+```
+
+**5. Compose:** `docker-compose.nvidia.yml` gives Plex the GPU.
+- CLI: `make up GPU=nvidia`
+- Portainer deploys one file: run `make gpu-config` and paste the output as the stack file.
+
+Check with `docker exec plex nvidia-smi`.
+
+**6. Plex:** Settings → Transcoder → tick **Use hardware acceleration when available** and **Use hardware-accelerated video encoding**, then pick the GPU. While something transcodes, the Plex dashboard shows **(hw)** and `nvidia-smi` lists the `Plex Transcoder` process.
+
+Consumer NVIDIA cards limit the number of simultaneous NVENC encodes (currently 8), which is plenty for a household.
+
+**Intel Quick Sync instead:** pass the iGPU to the VM (or run Docker on bare metal) and add `devices: ["/dev/dri:/dev/dri"]` to Plex in a `docker-compose.override.yml`.
 
 ### Memory and log limits
 

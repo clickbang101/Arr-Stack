@@ -1,0 +1,18 @@
+# Optional add-on: NVIDIA GPU hardware transcoding for Plex (needs Plex Pass).
+# Requires the NVIDIA driver and NVIDIA Container Toolkit on the Docker host.
+# See README "Hardware transcoding (NVIDIA)".
+#   CLI:       make up GPU=nvidia
+#   Portainer: paste the merged file from `make gpu-config` as the stack file.
+
+services:
+  plex:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

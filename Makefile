@@ -1,6 +1,8 @@
-COMPOSE ?= docker compose
+# GPU=nvidia adds docker-compose.nvidia.yml (Plex hardware transcoding)
+GPU ?=
+COMPOSE ?= docker compose -f docker-compose.yml $(if $(GPU),-f docker-compose.$(GPU).yml)
 
-.PHONY: up down restart logs pull update ps network setup
+.PHONY: up down restart logs pull update ps network setup gpu-config
 
 up: network
 	$(COMPOSE) up -d
@@ -29,3 +31,8 @@ network:
 
 setup:
 	@bash setup.sh
+
+# Print docker-compose.yml merged with the NVIDIA add-on, ${VARS} kept, for
+# pasting into Portainer (which deploys a single file)
+gpu-config:
+	@docker compose -f docker-compose.yml -f docker-compose.nvidia.yml config --no-interpolate
