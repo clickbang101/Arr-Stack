@@ -266,3 +266,20 @@ services:
       # Work folder on the same filesystem as media, so finished files are
       # moved into place instantly instead of copied.
       - ${DATA_PATH:?set DATA_PATH in .env}/tdarr-cache:/temp
+
+  # Optional: alerts (Telegram etc.) when a container stops, a web UI stops
+  # answering, the disk fills up or the nightly backup fails. Off unless
+  # COMPOSE_PROFILES includes "monitoring". See README "Monitoring and alerts".
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    logging: *logging
+    profiles: ["monitoring"]
+    networks: [arr-net]
+    ports:
+      - ${UPTIME_KUMA_PORT:-3001}:3001
+    volumes:
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/uptime-kuma:/app/data
+      # Read-only: lets it see whether each container is running/healthy
+      - /var/run/docker.sock:/var/run/docker.sock:ro
