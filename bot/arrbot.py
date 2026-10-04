@@ -346,6 +346,13 @@ def main():
             q = f"{TG}/getUpdates?timeout=50" + (f"&offset={offset}" if offset else "")
             for u in http_json(q, timeout=60).get("result", []):
                 offset = u["update_id"] + 1
+                kinds = [k for k in u if k != "update_id"]
+                if "my_chat_member" in u:  # bot added to / removed from a chat
+                    c = u["my_chat_member"]["chat"]
+                    print(f"membership update: {u['my_chat_member']['new_chat_member'].get('status')} in "
+                          f"{c.get('type')} chat {c.get('id')} ({c.get('title') or 'private'})", flush=True)
+                elif "message" not in u:
+                    print(f"update of type {kinds}", flush=True)
                 msg = u.get("message") or {}
                 chat = str(msg.get("chat", {}).get("id"))
                 text = (msg.get("text") or "").strip()
