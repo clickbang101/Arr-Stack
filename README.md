@@ -281,6 +281,9 @@ Plex is transcoding. See [CPU limits](#cpu-limits).
 **Everything is slow and swap is full**
 Check `pgrep -c chromium`. Dozens means FlareSolverr has leaked browsers: `docker restart flaresolverr`. See [Memory and log limits](#memory-and-log-limits).
 
+**Stack update leaves containers stuck in "Created", or one shows "Dead"**
+A container that can't be removed (often FlareSolverr after its Chromium leak) stops `docker compose` partway through, so the new containers are never started. Check with `docker ps -a`. Bring everything back with `docker start <name> …` for each `Created` container. Then clear the dead one with `sudo systemctl restart docker` (or reboot the VM), followed by `docker rm -f <name>`. If a `<hash>_<name>` copy is left over, run `docker rename <hash>_<name> <name>` and `docker start <name>`.
+
 **Sonarr queue warning: "No files found are eligible for import"**
 Usually a fake release whose only file was blocked by qBittorrent's excluded file names. In Activity → Queue, remove it and tick **Blocklist Release**. Sonarr then searches for a different release.
 
