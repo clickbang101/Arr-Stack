@@ -16,7 +16,7 @@ trap 'rm -rf "$SNAP"' EXIT
 
 PLEX="plex/Library/Application Support/Plex Media Server"
 EXCLUDES=(
-  --exclude="MediaCover/" --exclude=".cache/" --exclude="logs/" --exclude="Logs/" --exclude="Backups/"
+  --exclude="MediaCover/" --exclude=".cache/" --exclude="JobReports/" --exclude="logs/" --exclude="Logs/" --exclude="Backups/"
   --exclude="/$PLEX/Cache/" --exclude="/$PLEX/Media/" --exclude="/$PLEX/Metadata/"
   --exclude="/$PLEX/Crash Reports/" --exclude="/$PLEX/Updates/"
   --exclude="*-wal" --exclude="*-shm" --exclude="*.db" --exclude="*.sqlite"
@@ -28,8 +28,11 @@ EXCLUDES=(
 rc=0; rsync -a "${EXCLUDES[@]}" "$APPDATA_PATH/" "$SNAP/$NAME/" 2>"$SNAP/rsync.err" || rc=$?
 if [ "$rc" -ne 0 ]; then
   [ "$rc" -eq 23 ] || [ "$rc" -eq 24 ] || { cat "$SNAP/rsync.err" >&2; exit "$rc"; }
-  echo "warn: $(grep -c 'Permission denied' "$SNAP/rsync.err") unreadable path(s) skipped:" >&2
-  grep -o '"[^"]*"' "$SNAP/rsync.err" | sed 's/^/  /' | head -5 >&2
+  # Summarise per app folder. awk reads everything, so no SIGPIPE under pipefail.
+  echo "warn: unreadable paths skipped (count per folder):" >&2
+  awk -v base="$APPDATA_PATH/" 'match($0, /"[^"]+"/) {
+      p = substr($0, RSTART + 1, RLENGTH - 2); sub("^" base, "", p); split(p, a, "/"); n[a[1]]++ }
+    END { for (k in n) printf "  %6d  %s\n", n[k], k }' "$SNAP/rsync.err" >&2
 fi
 
 # ...then add consistent snapshots of the live databases at the same paths.
@@ -39,7 +42,7 @@ while IFS= read -r -d '' db; do
   sqlite3 "file:$db?mode=ro" ".timeout 10000" ".backup '$SNAP/$NAME/$db'" 2>/dev/null \
     || { echo "warn: could not snapshot $db, copying it as-is" >&2; cp -p "$db" "$SNAP/$NAME/$db"; }
 done < <(find . \( -path "./$PLEX/Cache" -o -path "./$PLEX/Media" -o -path "./$PLEX/Metadata" \) -prune \
-           -o \( -name "*.db" -o -name "*.sqlite" \) -type f -size +0 -print0)
+           -o \( -name "*.db" -o -name "*.sqlite" \) -type f -size +0 -print0 2>/dev/null)
 
 rm -f "$SNAP/rsync.err"
 tar -C "$SNAP" -c "$NAME" | zstd -q -T0 -10
