@@ -25,3 +25,7 @@ node_modules/
 *.bak
 *.swp
 *.tmp
+
+# Personal planning notes and Claude Code project config (kept local)
+.planning/
+.claude/
