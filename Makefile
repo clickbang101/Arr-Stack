@@ -4,7 +4,7 @@ GPU ?=
 ADDONS ?= $(GPU)
 COMPOSE ?= docker compose -f docker-compose.yml $(foreach a,$(ADDONS),-f docker-compose.$(a).yml)
 
-.PHONY: up down restart logs pull update ps network setup gpu-config portainer-config backup
+.PHONY: up down restart logs pull update ps network setup gpu-config portainer-config backup bot-install
 
 up: network
 	$(COMPOSE) up -d
@@ -46,3 +46,7 @@ portainer-config:
 
 gpu-config:
 	@python3 scripts/portainer-config.py nvidia
+
+# Copy the Telegram bot script into APPDATA_PATH (the arrbot container runs it from there)
+bot-install:
+	@set -a; . ./.env; set +a; install -D -m 644 bot/arrbot.py "$$APPDATA_PATH/arrbot/arrbot.py" && echo "installed to $$APPDATA_PATH/arrbot/"

@@ -283,3 +283,31 @@ services:
       - ${APPDATA_PATH:?set APPDATA_PATH in .env}/uptime-kuma:/app/data
       # Read-only: lets it see whether each container is running/healthy
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Optional: Telegram bot with /status, /disk, /vpn, /downloads, /leaving, /watching,
+  # /search and confirmed /restart + /clearstuck. Only answers TELEGRAM_CHAT_ID
+  # (your chat, optionally a family group); actions only for TELEGRAM_ADMIN_IDS.
+  # Off unless COMPOSE_PROFILES includes "bot". Install the script first:
+  # make bot-install (copies bot/arrbot.py to APPDATA_PATH/arrbot/). See README.
+  arrbot:
+    image: python:3.12-slim
+    container_name: arrbot
+    restart: unless-stopped
+    logging: *logging
+    profiles: ["bot"]
+    networks: [arr-net]
+    command: python -u /appdata/arrbot/arrbot.py
+    extra_hosts:
+      - host.docker.internal:host-gateway  # Plex runs on the host network
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:?set TELEGRAM_CHAT_ID in .env}
+      - TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS:-}
+      - PLEX_URL=${PLEX_URL:-http://host.docker.internal:32400}
+      - TZ=${TZ:-UTC}
+    volumes:
+      # Read-only: the bot reads app API keys from their config files
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}:/appdata:ro
+      - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media:ro
+      # Needed for container status and /restart
+      - /var/run/docker.sock:/var/run/docker.sock

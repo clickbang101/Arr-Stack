@@ -203,6 +203,31 @@ Uptime Kuma (`COMPOSE_PROFILES=monitoring`, web UI on port 3001) can message you
 
 ---
 
+## Telegram bot (optional)
+
+`bot/arrbot.py` is a small Telegram bot (Python standard library only) that runs as the `arrbot` container (`COMPOSE_PROFILES=bot`):
+
+| Command | Reply |
+|---|---|
+| `/status` | containers, VPN, disk, queue at a glance |
+| `/disk` · `/vpn` | disk space · VPN location + forwarded port (never your home IP) |
+| `/downloads` · `/stuck` | active downloads · downloads stuck > 24 h |
+| `/recent` · `/leaving` | last 10 imports · what Maintainerr removes next |
+| `/watching` | who is streaming, and whether Plex transcodes on the GPU |
+| `/search <name>` | is it in Sonarr/Radarr, wanted, downloading? |
+| `/restart <app>` · `/clearstuck` | actions; ask for `/yes` within 60 s; admins only |
+
+**Setup:**
+1. Create a bot with @BotFather and send it a message.
+2. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (your chat ID).
+3. Run `make bot-install` (copies the script to `APPDATA_PATH/arrbot/`), add `bot` to `COMPOSE_PROFILES`, then `make up` or update the stack.
+
+**Family group:** create a Telegram group and add the bot and members. Send `/status` in the group: the bot ignores it but logs the group ID (`docker logs arrbot`). Add that ID to `TELEGRAM_CHAT_ID`, comma-separated, and update the stack. Everyone in the group can use the read-only commands. `/restart` and `/clearstuck` stay limited to `TELEGRAM_ADMIN_IDS`, which defaults to your own chat ID.
+
+The bot reads app API keys from their config files (`APPDATA_PATH` mounted read-only) and needs the Docker socket for status and `/restart`. Treat the bot token like a password.
+
+---
+
 ## Backups
 
 App settings and databases live in `APPDATA_PATH` (a few GB). Media can be re-downloaded; settings can't, so back these up **to a different disk**.
