@@ -9,8 +9,16 @@ Reads app API keys from the app config files mounted read-only at /appdata,
 talks to Docker over its socket.
 
 Commands: /status /disk /vpn /downloads /stuck /recent /leaving /watching
-          /search <name> /restart <app> /clearstuck /help
+          /search <name> /request <name> /restart <app> /clearstuck /help
 Actions (/restart, /clearstuck) need a /yes within 60 seconds.
+
+Background checks (every 15 min):
+- Leaving soon: 2 days before Maintainerr deletes something, posts to every chat
+  with a Keep button (excludes it in Maintainerr).
+- Problems: fake releases (only an .exe inside) and downloads stuck 48 h+ are sent
+  to the admins with a "Find another" button (remove + blocklist + search again).
+Sent alerts are remembered in ARRBOT_STATE (default /data/state.json) so they
+aren't repeated after a restart.
 """
 import http.client
 import json
@@ -18,6 +26,7 @@ import os
 import re
 import socket
 import sys
+import threading
 import time
 import traceback
 import urllib.parse
@@ -27,11 +36,11 @@ from datetime import datetime, timezone
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHATS = {c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",") if c.strip()}
 ADMINS = {a.strip() for a in (os.environ.get("TELEGRAM_ADMIN_IDS") or ",".join(c for c in CHATS if not c.startswith("-"))).split(",") if a.strip()}
-ACTIONS = {"restart", "clearstuck", "yes"}
+ACTIONS = {"restart", "clearstuck", "yes", "fix"}
 # Non-admins get DEFAULT commands; TELEGRAM_USER_COMMANDS overrides per person:
 #   "123456=status,search;789012=status,search,leaving,watching"
 DEFAULT = {c.strip() for c in (os.environ.get("TELEGRAM_DEFAULT_COMMANDS") or
-           "status,disk,vpn,downloads,stuck,recent,leaving,search").split(",") if c.strip()}
+           "status,disk,vpn,downloads,stuck,recent,leaving,search,request,keep").split(",") if c.strip()}
 PER_USER = {}
 for part in (os.environ.get("TELEGRAM_USER_COMMANDS") or "").split(";"):
     if "=" in part:
@@ -53,6 +62,12 @@ PLEX = os.environ.get("PLEX_URL", "http://192.168.198.11:32400")
 RESTARTABLE = {"plex", "sonarr", "radarr", "prowlarr", "qbittorrent", "gluetun", "seerr", "bazarr",
                "unpackerr", "flaresolverr", "jackett", "tautulli", "maintainerr", "uptime-kuma"}
 STUCK_HOURS = 24
+STUCK_ALERT_HOURS = 48
+LEAVING_ALERT_DAYS = 2
+CHECK_EVERY = 900  # seconds between background checks
+STATE_FILE = os.environ.get("ARRBOT_STATE", "/data/state.json")
+MAINTAINERR = "http://maintainerr:6246/api"
+SEERR = "http://seerr:5055/api/v1"
 TG = f"https://api.telegram.org/bot{TOKEN}"
 pending = {}  # (chat, user) -> (expires, description, function)
 ctx = {"chat": None, "user": None}  # who sent the command being handled
@@ -144,10 +159,47 @@ def chunks(text, size=3900):
     return out + [cur] if cur else out
 
 
-def send(text, chat=None):
-    for part in chunks(text):
-        http_json(f"{TG}/sendMessage", body={"chat_id": chat or ctx["chat"], "text": part,
-                                             "parse_mode": "HTML", "disable_web_page_preview": True})
+def send(text, chat=None, buttons=None):
+    """buttons: rows of (label, callback_data); attached to the last message part."""
+    parts = chunks(text)
+    for i, part in enumerate(parts):
+        body = {"chat_id": chat or ctx["chat"], "text": part, "parse_mode": "HTML", "disable_web_page_preview": True}
+        if buttons and i == len(parts) - 1:
+            body["reply_markup"] = {"inline_keyboard": [[{"text": t[:60], "callback_data": d} for t, d in row]
+                                                        for row in buttons]}
+        http_json(f"{TG}/sendMessage", body=body)
+
+
+# ---------- remembered alerts ----------
+state_lock = threading.Lock()
+
+
+def load_state():
+    try:
+        return json.load(open(STATE_FILE))
+    except (OSError, ValueError):
+        return {}
+
+
+state = load_state()
+
+
+def already_sent(key):
+    """True if this alert went out before; otherwise records it and returns False."""
+    with state_lock:
+        if key in state:
+            return True
+        state[key] = time.time()
+        cutoff = time.time() - 30 * 86400
+        for k in [k for k, t in state.items() if t < cutoff]:
+            del state[k]
+        try:
+            with open(STATE_FILE + ".tmp", "w") as f:
+                json.dump(state, f)
+            os.replace(STATE_FILE + ".tmp", STATE_FILE)
+        except OSError as e:
+            print(f"can't save {STATE_FILE} ({e}); alerts may repeat after a restart", flush=True)
+        return False
 
 
 def esc(s):
@@ -226,14 +278,14 @@ def cmd_downloads(_):
     return "\n".join(lines)
 
 
-def stuck_items():
+def stuck_items(hours=STUCK_HOURS):
     now = datetime.now(timezone.utc)
     out = []
     for r in queue_items():
         added = r.get("added")
         age = (now - datetime.fromisoformat(added.replace("Z", "+00:00"))).total_seconds() / 3600 if added else 0
         msgs = str(r.get("statusMessages")) + str(r.get("errorMessage"))
-        if age >= STUCK_HOURS and (r.get("status") in ("warning", "queued", "paused") or "stalled" in msgs.lower()):
+        if age >= hours and (r.get("status") in ("warning", "queued", "paused") or "stalled" in msgs.lower()):
             out.append(r)
     return out
 
@@ -257,10 +309,10 @@ def cmd_recent(_):
     return "<b>Recently added</b>\n" + "\n".join(f"• {esc(t[:60])} ({ago(d)})" for d, t in ev[:10])
 
 
-def cmd_leaving(_):
-    cols = http_json("http://maintainerr:6246/api/collections")
+def leaving_rows():
+    """(due timestamp, plex id, collection title), soonest first."""
     rows = []
-    for c in cols:
+    for c in http_json(f"{MAINTAINERR}/collections"):
         if not c.get("isActive"):
             continue
         for m in c.get("media", []):
@@ -269,9 +321,13 @@ def cmd_leaving(_):
                 add = add.replace(tzinfo=timezone.utc)
             due = add.timestamp() + c["deleteAfterDays"] * 86400
             rows.append((due, m.get("plexId"), c["title"]))
+    return sorted(rows)
+
+
+def cmd_leaving(_):
+    rows = leaving_rows()
     if not rows:
         return "Nothing scheduled for removal."
-    rows.sort()
     tok = plex_token()
     lines = [f"<b>Leaving soon ({len(rows)})</b> — watch something to keep it"]
     day = None
@@ -326,7 +382,159 @@ def cmd_search(arg):
     for r in queue_items():
         if q in r["title"].lower():
             out.append(f"⬇️ downloading: {esc(r['title'][:60])} {100 * (1 - r['sizeleft'] / max(r['size'], 1)):.0f}%")
-    return "\n".join(out[:20]) or f"Nothing matching “{esc(arg)}” in Sonarr/Radarr. Request it in Seerr."
+    return "\n".join(out[:20]) or f"Nothing matching “{esc(arg)}” in Sonarr/Radarr. Try /request {esc(arg)}"
+
+
+def seerr(path, method="GET", body=None):
+    key = json.load(open(f"{APPDATA}/overseerr/settings.json"))["main"]["apiKey"]
+    return http_json(f"{SEERR}{path}", {"X-Api-Key": key}, method, body)
+
+
+SEERR_STATUS = {2: "⏳ requested", 3: "⬇️ on its way", 4: "🟡 partly in library", 5: "✅ in library"}
+
+
+def cmd_request(arg):
+    if not arg:
+        return "Usage: /request &lt;name&gt;"
+    res = [r for r in seerr(f"/search?query={urllib.parse.quote(arg)}&page=1")["results"]
+           if r.get("mediaType") in ("movie", "tv")][:6]
+    if not res:
+        return f"Nothing found for “{esc(arg)}”."
+    lines, buttons = [f"<b>Results for “{esc(arg)}”</b> — tap one to request it"], []
+    for r in res:
+        name = r.get("title") or r.get("name")
+        year = (r.get("releaseDate") or r.get("firstAirDate") or "")[:4]
+        label = f"{'🎬' if r['mediaType'] == 'movie' else '📺'} {name}" + (f" ({year})" if year else "")
+        status = SEERR_STATUS.get((r.get("mediaInfo") or {}).get("status"))
+        lines.append(f"• {esc(label)}" + (f" — {status}" if status else ""))
+        if not status:
+            buttons.append([(label, f"req:{r['mediaType']}:{r['id']}")])
+    if not buttons:
+        lines.append("\nEverything here is already requested or in the library.")
+    send("\n".join(lines), buttons=buttons)
+    return None
+
+
+def do_request(kind, tmdb_id):
+    body = {"mediaType": kind, "mediaId": int(tmdb_id)}
+    if kind == "tv":
+        body["seasons"] = "all"
+    seerr("/request", "POST", body)
+    m = seerr(f"/{kind}/{tmdb_id}")
+    return m.get("title") or m.get("name") or tmdb_id
+
+
+def keep(plex_id):
+    """Exclude from every Maintainerr rule and take it out of the leaving collections now."""
+    http_json(f"{MAINTAINERR}/rules/exclusion", method="POST", body={"mediaId": int(plex_id), "action": 0})
+    http_json(f"{MAINTAINERR}/collections/media?mediaId={int(plex_id)}", method="DELETE")
+
+
+def fix_download(app, queue_id):
+    port = {"sonarr": 8989, "radarr": 7878}[app]
+    http_json(f"http://{app}:{port}/api/v3/queue/{int(queue_id)}?removeFromClient=true&blocklist=true&skipRedownload=false",
+              {"X-Api-Key": arr_key(app)}, "DELETE")
+
+
+# ---------- background checks ----------
+def is_fake(r):
+    """qBittorrent skips excluded files (.exe etc.); a 'finished' download with nothing selected is a fake."""
+    msgs = (str(r.get("statusMessages")) + str(r.get("errorMessage"))).lower()
+    return "executable" in msgs or ".exe" in msgs or (r.get("size") == 0 and r.get("status") == "completed")
+
+
+def check_leaving():
+    soon = time.time() + LEAVING_ALERT_DAYS * 86400
+    rows, seen = [], set()
+    for due, pid, _ in leaving_rows():
+        if time.time() < due <= soon and pid not in seen:
+            seen.add(pid)
+            if not already_sent(f"leave:{pid}:{int(due) // 86400}"):
+                rows.append((due, pid))
+    if not rows:
+        return
+    tok = plex_token()
+    for i in range(0, len(rows), 25):
+        batch = rows[i:i + 25]
+        lines = ["🗑 <b>Leaving soon</b> — watch it, or tap Keep to save it"]
+        buttons = []
+        for due, pid in batch:
+            t = plex_title(pid, tok)
+            lines.append(f"• {esc(t)} — {datetime.fromtimestamp(due).strftime('%a %d %b')}")
+            buttons.append([(f"Keep {t}", f"keep:{pid}")])
+        for chat in [c for c in CHATS if c.startswith("-")] or CHATS:  # groups if any, else private chats
+            send("\n".join(lines), chat, buttons)
+
+
+def check_problems():
+    items = queue_items()
+    stuck_ids = {(r["_app"], r["id"]) for r in stuck_items(STUCK_ALERT_HOURS)}
+    found = []
+    for r in items:
+        if is_fake(r):
+            kind = "🦠 Fake release (only an .exe inside, blocked)"
+        elif (r["_app"], r["id"]) in stuck_ids:
+            kind = f"🐢 Stuck {ago(r['added']).replace(' ago', '')}"
+        else:
+            continue
+        if not already_sent(f"problem:{r.get('downloadId') or r['id']}"):
+            found.append((kind, r))
+    if not found:
+        return
+    lines = ["⚠️ <b>Download problems</b>"]
+    lines += [f"• {kind}: {esc(r['title'][:60])}" for kind, r in found]
+    buttons = [[(f"Find another: {r['title'][:40]}", f"fix:{r['_app']}:{r['id']}")] for _, r in found[:25]]
+    for admin in ADMINS:
+        send("\n".join(lines), admin, buttons)
+
+
+def watcher():
+    time.sleep(60)
+    while True:
+        for check in (check_leaving, check_problems):
+            try:
+                check()
+            except Exception:
+                traceback.print_exc()
+        time.sleep(CHECK_EVERY)
+
+
+# ---------- buttons ----------
+def on_button(cq):
+    user = str(cq["from"]["id"])
+    who = cq["from"].get("first_name", "someone")
+    msg = cq.get("message") or {}
+    chat = str(msg.get("chat", {}).get("id"))
+    data = cq.get("data", "")
+    kind, *args = data.split(":")
+    cmd = {"keep": "keep", "req": "request", "fix": "fix"}.get(kind)
+    print(f"button {data} from {who} (user id {user})", flush=True)
+
+    def toast(text):
+        http_json(f"{TG}/answerCallbackQuery", body={"callback_query_id": cq["id"], "text": text})
+    if chat not in CHATS or not cmd:
+        return toast("Not available here.")
+    if not allowed(user, cmd):
+        return toast("🔒 You don't have access to that.")
+    try:
+        if cmd == "keep":
+            keep(args[0])
+            done = f"✅ {esc(plex_title(args[0], plex_token()))} will be kept (by {esc(who)})."
+        elif cmd == "request":
+            done = f"📥 Requested {esc(do_request(args[0], args[1]))} (by {esc(who)})."
+        else:
+            fix_download(args[0], args[1])
+            done = f"🔁 Removed + blocklisted; {args[0]} is searching for another release."
+    except Exception as e:
+        traceback.print_exc()
+        return toast(f"Failed: {e}"[:190])
+    toast("Done")
+    # Drop the pressed button so it can't be tapped twice.
+    rows = [[b for b in row if b.get("callback_data") != data]
+            for row in (msg.get("reply_markup") or {}).get("inline_keyboard", [])]
+    http_json(f"{TG}/editMessageReplyMarkup", body={"chat_id": chat, "message_id": msg.get("message_id"),
+                                                    "reply_markup": {"inline_keyboard": [r for r in rows if r]}})
+    send(done, chat)
 
 
 # ---------- actions (need /yes) ----------
@@ -367,7 +575,8 @@ def cmd_yes(_):
 HELP = [("status", "everything at a glance"), ("disk", "disk space"), ("vpn", "VPN location + port"),
         ("downloads", "what's downloading"), ("stuck", "downloads stuck &gt;24 h"), ("recent", "last 10 added"),
         ("leaving", "what Maintainerr removes next"), ("watching", "who's streaming"),
-        ("search", "&lt;name&gt; – find a show/movie"), ("restart", "&lt;app&gt; – restart one app (asks to confirm)"),
+        ("search", "&lt;name&gt; – find a show/movie"), ("request", "&lt;name&gt; – ask for a show/movie"),
+        ("restart", "&lt;app&gt; – restart one app (asks to confirm)"),
         ("clearstuck", "clear stuck downloads (asks to confirm)")]
 
 
@@ -378,6 +587,7 @@ def cmd_help(_):
 
 COMMANDS = {"status": cmd_status, "disk": cmd_disk, "vpn": cmd_vpn, "downloads": cmd_downloads, "stuck": cmd_stuck,
             "recent": cmd_recent, "leaving": cmd_leaving, "watching": cmd_watching, "search": cmd_search,
+            "request": cmd_request,
             "restart": cmd_restart, "clearstuck": cmd_clearstuck, "yes": cmd_yes, "help": cmd_help, "start": cmd_help}
 
 
@@ -387,9 +597,11 @@ def main():
             ("status", "Everything at a glance"), ("disk", "Disk space"), ("vpn", "VPN location and port"),
             ("downloads", "What's downloading"), ("stuck", "Downloads stuck >24h"), ("recent", "Last 10 added"),
             ("leaving", "What Maintainerr removes next"), ("watching", "Who's streaming"),
-            ("search", "Find a show or movie"), ("restart", "Restart one app"),
+            ("search", "Find a show or movie"), ("request", "Ask for a show or movie"),
+            ("restart", "Restart one app"),
             ("clearstuck", "Clear stuck downloads"), ("help", "All commands"))]})
     offset = None
+    threading.Thread(target=watcher, daemon=True).start()
     print("arrbot running", flush=True)
     while True:
         try:
@@ -401,6 +613,12 @@ def main():
                     c = u["my_chat_member"]["chat"]
                     print(f"membership update: {u['my_chat_member']['new_chat_member'].get('status')} in "
                           f"{c.get('type')} chat {c.get('id')} ({c.get('title') or 'private'})", flush=True)
+                elif "callback_query" in u:
+                    try:
+                        on_button(u["callback_query"])
+                    except Exception:
+                        traceback.print_exc()
+                    continue
                 elif "message" not in u:
                     print(f"update of type {kinds}", flush=True)
                 msg = u.get("message") or {}
@@ -423,7 +641,9 @@ def main():
                     continue
                 fn = COMMANDS.get(cmd)
                 try:
-                    send(fn(arg.strip()) if fn else "Unknown command. /help")
+                    reply = fn(arg.strip()) if fn else "Unknown command. /help"
+                    if reply:
+                        send(reply)
                 except Exception as e:
                     traceback.print_exc()
                     send(f"⚠️ {esc(cmd)} failed: {esc(e)}")

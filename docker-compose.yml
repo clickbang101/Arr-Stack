@@ -310,6 +310,8 @@ services:
     volumes:
       # Read-only: the bot reads app API keys from their config files
       - ${APPDATA_PATH:?set APPDATA_PATH in .env}:/appdata:ro
+      # Writable: remembers which alerts were already sent
+      - ${APPDATA_PATH:?set APPDATA_PATH in .env}/arrbot:/data
       - ${MEDIA_PATH:?set MEDIA_PATH in .env}:/media:ro
       # Needed for container status and /restart
       - /var/run/docker.sock:/var/run/docker.sock
