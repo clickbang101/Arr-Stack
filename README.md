@@ -223,6 +223,7 @@ Uptime Kuma (`COMPOSE_PROFILES=monitoring`, web UI on port 3001) can message you
 | `/pause` | stop downloads for 1 h, 3 h or until resumed (frees the internet for gaming/calls); resumes only what it stopped |
 | `/random [movie\|show]` | something unwatched from Plex, with Another / Movie / Show buttons |
 | `/tdarr` | Tdarr encodes and how much space the staged files would save (admins) |
+| `/ask <question>` | Claude answers from a snapshot of the server (queue, missing, health, shows, leaving…); Overview / Anything wrong? / What's new? buttons (admins; setup below) |
 | `/restart [app]` · `/clearstuck` | actions with app buttons and a Yes/Cancel confirm (or `/yes` within 60 s); admins only. Restarting gluetun also restarts qBittorrent (it shares gluetun's network) |
 
 Views (status, downloads, disk…) come with **Refresh** (updates the message in place) and **Menu** buttons; `/stuck` has a Find another button per download for admins.
@@ -236,7 +237,23 @@ It also checks every 15 minutes and posts on its own:
 
 `/pause` stops qBittorrent torrents by running its API from inside the `qbittorrent` container (its Web UI only skips the login for localhost); the stopped list is kept in `APPDATA_PATH/arrbot/paused.json` so a restart can still resume them.
 
-**New VPN server button (optional):** `/vpn` shows a **New VPN server** button for admins once gluetun's control server allows it. The button reconnects to a new random server in your `VPN_COUNTRIES`; changing country needs a stack redeploy. Create `APPDATA_PATH/gluetun/auth/config.toml` with a role for `GET /v1/vpn/status`, `PUT /v1/vpn/status` and `GET /v1/publicip/ip` ([gluetun control server docs](https://github.com/qdm12/gluetun-wiki/blob/main/setup/advanced/control-server.md)), then restart gluetun and qbittorrent.
+**New VPN server button (optional):** `/vpn` shows a **New VPN server** button for admins once gluetun's control server allows it. The button reconnects to a new random server in your `VPN_COUNTRIES`; changing country needs a stack redeploy. Create `APPDATA_PATH/gluetun/auth/config.toml` (the bot reads the key from it, nothing to add to `.env`), then restart gluetun and qbittorrent:
+
+```toml
+[[roles]]
+name = "arrbot"
+routes = ["GET /v1/vpn/status", "PUT /v1/vpn/status", "GET /v1/publicip/ip"]
+auth = "apikey"
+apikey = "<long random string, e.g. openssl rand -hex 20>"
+```
+
+See the [gluetun control server docs](https://github.com/qdm12/gluetun-wiki/blob/main/setup/advanced/control-server.md).
+
+**/ask (optional, uses your Claude subscription, no API bill):** the bot sends your question plus a plain-text snapshot of the server to Claude Code in print mode with all tools turned off, so it can only answer and never changes anything. Questions count toward your normal Claude usage limits.
+1. Install Claude Code into the bot's data folder (one time, on the server):
+   `docker run --rm -e HOME=/data/home -v "$APPDATA_PATH/arrbot:/data" python:3.12-slim sh -c "apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://claude.ai/install.sh | bash"`
+2. On any computer with Claude Code and a browser, run `claude setup-token` (Pro/Max subscription) and copy the token.
+3. Save it on the server as `APPDATA_PATH/arrbot/claude-token` (e.g. `sudo sh -c 'cat > "$APPDATA_PATH/arrbot/claude-token"' && sudo chmod 600 "$APPDATA_PATH/arrbot/claude-token"`, paste, Ctrl-D). Nothing to restart. Or set `CLAUDE_CODE_OAUTH_TOKEN` in the bot's environment instead.
 
 Alerts already sent are remembered in `APPDATA_PATH/arrbot/state.json`.
 
