@@ -846,10 +846,17 @@ def snapshot():
         except Exception as e:
             parts.append(f"## {name}\n(couldn't read: {e})")
     try:
-        lines = [f"{q['title']} | {q.get('status')} | {100 * (1 - q['sizeleft'] / max(q['size'], 1)):.0f}% | "
-                 f"{'; '.join(m for sm in q.get('statusMessages') or [] for m in sm.get('messages', []))[:120]}"
-                 for q in queue_items()]
-        parts.append("## Full download queue (title | status | done | messages)\n" + "\n".join(lines[:150]))
+        downloads = {}  # a season pack shows up once per episode in Sonarr's queue; list it once
+        for q in queue_items():
+            downloads.setdefault(q.get("downloadId") or q["id"], []).append(q)
+        lines = []
+        for qs in downloads.values():
+            q = qs[0]
+            msgs = "; ".join(m for sm in q.get("statusMessages") or [] for m in sm.get("messages", []))[:120]
+            lines.append(f"{q['title']} | {len(qs)} episode(s) | {q.get('status')} | "
+                         f"{100 * (1 - q['sizeleft'] / max(q['size'], 1)):.0f}% | {msgs}")
+        parts.append("## Download queue, one line per torrent (title | covers | status | done | messages)\n"
+                     + "\n".join(lines[:150]))
         for app in ("sonarr", "radarr"):
             h = arr(app, "/health")
             parts.append(f"## {app} health warnings\n" + ("\n".join(f"{x['type']}: {x['message']}" for x in h) or "none"))
