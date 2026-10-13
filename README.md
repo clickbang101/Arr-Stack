@@ -218,14 +218,25 @@ Uptime Kuma (`COMPOSE_PROFILES=monitoring`, web UI on port 3001) can message you
 | `/leaving` | what Maintainerr removes next, with Keep buttons for the coming week |
 | `/watching` | who is streaming, and whether Plex transcodes on the GPU |
 | `/search <name>` | is it in Sonarr/Radarr, wanted, downloading? (with a Request button) |
-| `/request <name>` | search Seerr and request a show/movie with one tap |
-| `/restart [app]` · `/clearstuck` | actions with app buttons and a Yes/Cancel confirm (or `/yes` within 60 s); admins only |
+| `/request <name>` | search Seerr and request a show/movie with one tap; things already requested show their progress and a **Search now** button |
+| `/missing` | aired episodes and released movies that aren't in the library yet, with **Search** buttons |
+| `/pause` | stop downloads for 1 h, 3 h or until resumed (frees the internet for gaming/calls); resumes only what it stopped |
+| `/random [movie\|show]` | something unwatched from Plex, with Another / Movie / Show buttons |
+| `/tdarr` | Tdarr encodes and how much space the staged files would save (admins) |
+| `/restart [app]` · `/clearstuck` | actions with app buttons and a Yes/Cancel confirm (or `/yes` within 60 s); admins only. Restarting gluetun also restarts qBittorrent (it shares gluetun's network) |
 
 Views (status, downloads, disk…) come with **Refresh** (updates the message in place) and **Menu** buttons; `/stuck` has a Find another button per download for admins.
 
 It also checks every 15 minutes and posts on its own:
 - **Leaving soon:** 2 days before Maintainerr deletes something, a message in every chat with a **Keep** button. Keep adds a Maintainerr exclusion (all rules) and takes the item out of the leaving collections.
 - **Download problems** (admins only): fake releases (qBittorrent skipped the only file, e.g. an `.exe`) and downloads stuck for 48 h, each with a **Find another** button (remove + blocklist + search again).
+- **Nothing found** (admins only): a show or movie added 1–30 days ago with nothing on disk and nothing downloading, with a **Search again** button. A show set to Sonarr's *Daily* type is pointed out, because Daily searches by air date and finds nothing for normal `S01E01` releases.
+- **Ready to watch:** new imports, one line per show or movie, in the group. Anyone who puts their Telegram chat ID in Seerr (Profile → Settings → Notifications → Telegram) and has started a chat with the bot also gets a private "your request is ready".
+- **Tdarr report** (admins only): at 10:15, after the overnight schedule, how many files were re-encoded. Silent when nothing ran.
+
+`/pause` stops qBittorrent torrents by running its API from inside the `qbittorrent` container (its Web UI only skips the login for localhost); the stopped list is kept in `APPDATA_PATH/arrbot/paused.json` so a restart can still resume them.
+
+**New VPN server button (optional):** `/vpn` shows a **New VPN server** button for admins once gluetun's control server allows it. The button reconnects to a new random server in your `VPN_COUNTRIES`; changing country needs a stack redeploy. Create `APPDATA_PATH/gluetun/auth/config.toml` with a role for `GET /v1/vpn/status`, `PUT /v1/vpn/status` and `GET /v1/publicip/ip` ([gluetun control server docs](https://github.com/qdm12/gluetun-wiki/blob/main/setup/advanced/control-server.md)), then restart gluetun and qbittorrent.
 
 Alerts already sent are remembered in `APPDATA_PATH/arrbot/state.json`.
 
@@ -236,7 +247,7 @@ Alerts already sent are remembered in `APPDATA_PATH/arrbot/state.json`.
 
 **Family group:** create a Telegram group and add the bot and members. Send `/status` in the group: the bot ignores it but logs the group ID (`docker logs arrbot`). Add that ID to `TELEGRAM_CHAT_ID`, comma-separated, and update the stack. Everyone in the group can use the read-only commands. `/restart` and `/clearstuck` stay limited to `TELEGRAM_ADMIN_IDS`, which defaults to your own chat ID.
 
-**Who can use what:** admins (`TELEGRAM_ADMIN_IDS`) get everything. Everyone else in an allowed chat gets `TELEGRAM_DEFAULT_COMMANDS` (default: `status,disk,vpn,downloads,stuck,recent,upcoming,leaving,search,request,keep`; `keep` is the Keep button, `fix` the Find another button; `/watching` is admin-only because it shows who watches what). Per person: `TELEGRAM_USER_COMMANDS="123456=search,leaving;789012=status,search,watching"`. Find someone's ID in `docker logs arrbot` after they send any command. `/help` lists only the commands that person can use.
+**Who can use what:** admins (`TELEGRAM_ADMIN_IDS`) get everything. Everyone else in an allowed chat gets `TELEGRAM_DEFAULT_COMMANDS` (default: `status,disk,vpn,downloads,stuck,recent,upcoming,leaving,search,request,keep,missing,pause,random`; `keep` is the Keep button, `fix` the Find another button; `/watching` is admin-only because it shows who watches what). Per person: `TELEGRAM_USER_COMMANDS="123456=search,leaving;789012=status,search,watching"`. Find someone's ID in `docker logs arrbot` after they send any command. `/help` lists only the commands that person can use.
 
 The bot reads app API keys from their config files (`APPDATA_PATH` mounted read-only; requests go through Seerr's API key, so they count as yours) and needs the Docker socket for status and `/restart`. Treat the bot token like a password.
 

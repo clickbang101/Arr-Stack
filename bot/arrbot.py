@@ -9,22 +9,29 @@ Reads app API keys from the app config files mounted read-only at /appdata,
 talks to Docker over its socket.
 
 Commands: /menu (buttons for everything) /status /disk /vpn /downloads /stuck
-          /recent /upcoming /leaving /watching /search <name> /request <name>
-          /restart [app] /clearstuck
-Views have Refresh + Menu buttons; actions (/restart, /clearstuck) ask for a
-Yes button (or /yes) within 60 seconds.
+          /recent /upcoming /leaving /watching /missing /random [movie|show]
+          /search <name> /request <name> /pause /tdarr /restart [app] /clearstuck
+Views have Refresh + Menu buttons; actions (/restart, /clearstuck, New VPN server)
+ask for a Yes button (or /yes) within 60 seconds.
 
 Background checks (every 15 min):
 - Leaving soon: 2 days before Maintainerr deletes something, posts to every chat
   with a Keep button (excludes it in Maintainerr).
 - Problems: fake releases (only an .exe inside) and downloads stuck 48 h+ are sent
   to the admins with a "Find another" button (remove + blocklist + search again).
+- Nothing found: added a day+ ago but nothing on disk or downloading -> admins,
+  with a "Search again" button.
+- Ready to watch: new imports, grouped per show, to the group; a private copy to
+  whoever requested it if they set their Telegram chat ID in Seerr.
+- Tdarr: after the night's schedule (10:15), what was re-encoded -> admins.
+Every minute: /pause auto-resume (paused torrents are listed in /data/paused.json).
 Sent alerts are remembered in ARRBOT_STATE (default /data/state.json) so they
 aren't repeated after a restart.
 """
 import http.client
 import json
 import os
+import random
 import re
 import socket
 import sys
@@ -39,11 +46,12 @@ from datetime import datetime, timezone
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHATS = {c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",") if c.strip()}
 ADMINS = {a.strip() for a in (os.environ.get("TELEGRAM_ADMIN_IDS") or ",".join(c for c in CHATS if not c.startswith("-"))).split(",") if a.strip()}
-ACTIONS = {"restart", "clearstuck", "yes", "fix"}
+ACTIONS = {"restart", "clearstuck", "yes", "fix", "vpnnew", "tdarr"}
 # Non-admins get DEFAULT commands; TELEGRAM_USER_COMMANDS overrides per person:
 #   "123456=status,search;789012=status,search,leaving,watching"
 DEFAULT = {c.strip() for c in (os.environ.get("TELEGRAM_DEFAULT_COMMANDS") or
-           "status,disk,vpn,downloads,stuck,recent,upcoming,leaving,search,request,keep").split(",") if c.strip()}
+           "status,disk,vpn,downloads,stuck,recent,upcoming,leaving,search,request,keep,"
+           "missing,pause,random").split(",") if c.strip()}
 PER_USER = {}
 for part in (os.environ.get("TELEGRAM_USER_COMMANDS") or "").split(";"):
     if "=" in part:
@@ -69,8 +77,13 @@ STUCK_ALERT_HOURS = 48
 LEAVING_ALERT_DAYS = 2
 CHECK_EVERY = 900  # seconds between background checks
 STATE_FILE = os.environ.get("ARRBOT_STATE", "/data/state.json")
+PAUSE_FILE = os.path.join(os.path.dirname(STATE_FILE), "paused.json")
+NOGRAB_HOURS = 24  # requested but nothing found or downloading after this long -> alert
+TDARR_REPORT_AT = 10.25  # local hour (10:15), after the Tdarr schedule ends
+QBIT_PORT = os.environ.get("QBIT_PORT", "8080")
 MAINTAINERR = "http://maintainerr:6246/api"
 SEERR = "http://seerr:5055/api/v1"
+TDARR = "http://tdarr:8265/api/v2"
 TG = f"https://api.telegram.org/bot{TOKEN}"
 pending = {}  # (chat, user) -> (expires, description, function)
 ctx = {"chat": None, "user": None}  # who sent the command being handled
@@ -96,14 +109,17 @@ class DockerConn(http.client.HTTPConnection):
         self.sock.connect("/var/run/docker.sock")
 
 
-def docker(method, path):
+def docker(method, path, body=None):
     c = DockerConn()
-    c.request(method, path)
+    if body is None:
+        c.request(method, path)
+    else:
+        c.request(method, path, json.dumps(body), {"Content-Type": "application/json"})
     r = c.getresponse()
     raw = r.read()
     if r.status >= 300:
         raise RuntimeError(f"docker {path}: {r.status}")
-    if "logs" in path:  # multiplexed stream: strip 8-byte frame headers
+    if "logs" in path or path.startswith("/exec/"):  # multiplexed stream: strip 8-byte frame headers
         out, i = [], 0
         while i + 8 <= len(raw):
             n = int.from_bytes(raw[i + 4:i + 8], "big")
@@ -113,14 +129,26 @@ def docker(method, path):
     return json.loads(raw) if raw.strip() else None
 
 
+def docker_exec(container, cmd):
+    """Run a command inside a container and return its output. qBittorrent and the gluetun
+    control server only trust localhost, so the bot talks to them from inside qbittorrent."""
+    ex = docker("POST", f"/containers/{container}/exec", {"Cmd": cmd, "AttachStdout": True, "AttachStderr": True})
+    return docker("POST", f"/exec/{ex['Id']}/start", {"Detach": False, "Tty": False})
+
+
+def qbit(path, data=None):
+    cmd = ["curl", "-s", "-m", "20", f"http://localhost:{QBIT_PORT}/api/v2/{path}"]
+    return docker_exec("qbittorrent", cmd + (["--data", data] if data is not None else []))
+
+
 def arr_key(app):
     return re.search(r"<ApiKey>([^<]+)", open(f"{APPDATA}/{app}/config.xml").read()).group(1)
 
 
-def arr(app, path):
+def arr(app, path, method="GET", body=None):
     port = {"sonarr": 8989, "radarr": 7878, "prowlarr": 9696}[app]
     ver = "v1" if app == "prowlarr" else "v3"
-    return http_json(f"http://{app}:{port}/api/{ver}{path}", {"X-Api-Key": arr_key(app)})
+    return http_json(f"http://{app}:{port}/api/{ver}{path}", {"X-Api-Key": arr_key(app)}, method, body)
 
 
 def arr_delete_bulk(app, ids):
@@ -186,22 +214,33 @@ def load_state():
 state = load_state()
 
 
+def save_state():
+    cutoff = time.time() - 30 * 86400
+    for k in [k for k, t in state.items() if not k.startswith("_") and t < cutoff]:
+        del state[k]
+    try:
+        with open(STATE_FILE + ".tmp", "w") as f:
+            json.dump(state, f)
+        os.replace(STATE_FILE + ".tmp", STATE_FILE)
+    except OSError as e:
+        print(f"can't save {STATE_FILE} ({e}); alerts may repeat after a restart", flush=True)
+
+
 def already_sent(key):
     """True if this alert went out before; otherwise records it and returns False."""
     with state_lock:
         if key in state:
             return True
         state[key] = time.time()
-        cutoff = time.time() - 30 * 86400
-        for k in [k for k, t in state.items() if t < cutoff]:
-            del state[k]
-        try:
-            with open(STATE_FILE + ".tmp", "w") as f:
-                json.dump(state, f)
-            os.replace(STATE_FILE + ".tmp", STATE_FILE)
-        except OSError as e:
-            print(f"can't save {STATE_FILE} ({e}); alerts may repeat after a restart", flush=True)
+        save_state()
         return False
+
+
+def remember(key, value):
+    """Keep a value (cursor, counter) across restarts; '_' keys never expire."""
+    with state_lock:
+        state["_" + key] = value
+        save_state()
 
 
 
@@ -291,8 +330,42 @@ def cmd_disk(_):
 
 def cmd_vpn(_):
     country, port, ok = vpn_info()
-    return (f"🛡 <b>VPN</b>\n\n{'🟢 Connected' if ok else '🔴 NOT healthy (torrents paused by kill switch)'}\n"
+    text = (f"🛡 <b>VPN</b>\n\n{'🟢 Connected' if ok else '🔴 NOT healthy (torrents paused by kill switch)'}\n"
             f"📍 {esc(country or 'unknown')}\n🔌 Forwarded port: {port or 'unknown'}")
+    if not allowed(ctx["user"], "vpnnew") or not vpn_switchable():
+        return text
+    return text + "\n\nDownloads slow? Try a different server.", [[("🔀 New VPN server", "cmd:vpnnew")]]
+
+
+def vpn_switchable():
+    try:
+        return "PUT /v1/vpn/status" in open(f"{APPDATA}/gluetun/auth/config.toml").read()
+    except OSError:
+        return False
+
+
+def vpn_reconnect():
+    """Stop + start the tunnel through gluetun's control server; it picks a new random server in
+    the same countries. (Changing country means redeploying the stack.) Needs the routes allowed in
+    gluetun's /gluetun/auth/config.toml; see README."""
+    old = vpn_info()[0]
+    since = int(time.time())
+    for status in ("stopped", "running"):
+        out = docker_exec("qbittorrent", ["curl", "-s", "-m", "60", "-X", "PUT", "-H", "Content-Type: application/json",
+                                          "-d", json.dumps({"status": status}), "http://127.0.0.1:8000/v1/vpn/status"])
+        if "outcome" not in out:
+            raise RuntimeError(f"gluetun said: {out.strip()[:120] or 'nothing'}")
+    for _ in range(30):
+        time.sleep(3)
+        logs = docker("GET", f"/containers/gluetun/logs?stdout=1&stderr=1&since={since}")
+        new = re.findall(r"Public IP address is \S+ \(([^)]*?)(?: - source|\))", logs)
+        if new:
+            return f"🔀 New VPN server: <b>{esc(new[-1])}</b>" + (f"\n<i>was {esc(old)}</i>" if old else "")
+    return "🔀 Reconnecting… check /vpn in a minute."
+
+
+def cmd_vpnnew(_):
+    return confirm("switch to a new VPN server (downloads pause for about a minute)", "ok:vpnnew", vpn_reconnect)
 
 
 def queue_items():
@@ -320,6 +393,8 @@ def cmd_downloads(_):
 
 
 def stuck_items(hours=STUCK_HOURS):
+    if paused():  # everything looks stuck while downloads are paused on purpose
+        return []
     now = datetime.now(timezone.utc)
     out = []
     for r in queue_items():
@@ -482,17 +557,62 @@ def cmd_request(arg):
     if not res:
         return f"📥 Nothing found for “{esc(arg)}”."
     lines, buttons = [f"📥 <b>Results for “{esc(arg)}”</b> — tap one to request it", ""], []
+    lib = {}
     for r in res:
         name = r.get("title") or r.get("name")
         year = (r.get("releaseDate") or r.get("firstAirDate") or "")[:4]
         label = f"{'🎬' if r['mediaType'] == 'movie' else '📺'} {name}" + (f" ({year})" if year else "")
-        status = SEERR_STATUS.get((r.get("mediaInfo") or {}).get("status"))
+        info = r.get("mediaInfo") or {}
+        status = SEERR_STATUS.get(info.get("status"))
         lines.append(f"• {esc(label)}" + (f" — {status}" if status else ""))
         if not status:
             buttons.append([(label, f"req:{r['mediaType']}:{r['id']}")])
+        elif info.get("status") in (2, 3, 4):
+            try:
+                progress, search = arr_progress(r["mediaType"], info, lib)
+            except Exception:
+                traceback.print_exc()
+                continue
+            lines.append(f"   <i>{progress}</i>")
+            if search:
+                buttons.append([(f"🔎 Search now: {name}", search)])
     if not buttons:
         lines.append("\nEverything here is already requested or in the library.")
     return "\n".join(lines), buttons
+
+
+def arr_progress(kind, info, lib):
+    """Where a requested show/movie is at in Sonarr/Radarr: (text, search button data or None)."""
+    app = "sonarr" if kind == "tv" else "radarr"
+    if app not in lib:
+        lib[app] = arr(app, "/series" if kind == "tv" else "/movie")
+        lib["queue"] = lib.get("queue") or queue_items()
+    if kind == "tv":
+        item = next((s for s in lib[app] if s.get("tvdbId") and s["tvdbId"] == info.get("tvdbId")), None)
+    else:
+        item = next((m for m in lib[app] if m.get("tmdbId") == info.get("tmdbId")), None)
+    if not item:
+        return "not in Sonarr/Radarr yet", None
+    queued = [q for q in lib["queue"] if q["_app"] == app and q.get("seriesId" if kind == "tv" else "movieId") == item["id"]]
+    search = f"srch:{app[0]}:{item['id']}"
+    if kind == "tv":
+        st = item.get("statistics", {})
+        have, aired = st.get("episodeFileCount", 0), st.get("episodeCount", 0)
+        text = f"{have}/{aired} aired episodes" if aired else "nothing has aired yet"
+    else:
+        text = "in library" if item.get("hasFile") else "not released yet" if not item.get("isAvailable") else "not found yet"
+    if queued:
+        left = sum(q["sizeleft"] for q in queued) / max(sum(q["size"] for q in queued), 1)
+        return text + f" · ⬇️ {len(queued)} downloading, {100 * (1 - left):.0f}%", None
+    return text, search if (kind == "tv" and aired and have < aired) or (kind == "movie" and item.get("isAvailable") and not item.get("hasFile")) else None
+
+
+def search_again(app, item_id):
+    if app in ("s", "sonarr"):
+        arr("sonarr", "/command", "POST", {"name": "SeriesSearch", "seriesId": int(item_id)})
+        return arr("sonarr", f"/series/{int(item_id)}")["title"]
+    arr("radarr", "/command", "POST", {"name": "MoviesSearch", "movieIds": [int(item_id)]})
+    return arr("radarr", f"/movie/{int(item_id)}")["title"]
 
 
 def do_request(kind, tmdb_id):
@@ -514,6 +634,166 @@ def fix_download(app, queue_id):
     port = {"sonarr": 8989, "radarr": 7878}[app]
     http_json(f"http://{app}:{port}/api/v3/queue/{int(queue_id)}?removeFromClient=true&blocklist=true&skipRedownload=false",
               {"X-Api-Key": arr_key(app)}, "DELETE")
+
+
+def cmd_missing(_):
+    series = {s["id"]: s for s in arr("sonarr", "/series")}
+    queued = {(q["_app"], q.get("seriesId") or q.get("movieId")) for q in queue_items()}
+    shows = {}
+    for e in arr("sonarr", "/wanted/missing?pageSize=5000&monitored=true")["records"]:
+        s = shows.setdefault(e["seriesId"], {"n": 0, "seasons": set(), "last": ""})
+        s["n"] += 1
+        s["seasons"].add(e["seasonNumber"])
+        s["last"] = max(s["last"], e.get("airDateUtc") or "")
+    movies = [m for m in arr("radarr", "/wanted/missing?pageSize=500&monitored=true")["records"] if m.get("isAvailable")]
+    if not shows and not movies:
+        return "🔍 Nothing missing. 👍"
+    lines, buttons = [f"🔍 <b>Missing</b> — aired but not in the library", ""], []
+    for sid, s in sorted(shows.items(), key=lambda kv: kv[1]["last"], reverse=True)[:25]:
+        title = series.get(sid, {}).get("title", f"series {sid}")
+        seasons = sorted(s["seasons"])
+        span = f"S{seasons[0]:02}" + (f"–S{seasons[-1]:02}" if len(seasons) > 1 else "")
+        busy = ("sonarr", sid) in queued
+        lines.append(f"📺 {esc(title)} — {s['n']} ep ({span})" + (" · ⬇️" if busy else ""))
+        if not busy and len(buttons) < 10:
+            buttons.append([(f"🔎 {title}", f"srch:s:{sid}")])
+    if len(shows) > 25:
+        lines.append(f"…and {len(shows) - 25} more shows")
+    if movies:
+        lines.append("")
+    for m in movies[:15]:
+        busy = ("radarr", m["id"]) in queued
+        lines.append(f"🎬 {esc(m['title'])} ({m.get('year')})" + (" · ⬇️" if busy else ""))
+        if not busy and len(buttons) < 15:
+            buttons.append([(f"🔎 {m['title']}", f"srch:r:{m['id']}")])
+    if buttons:
+        lines.append("\n⬇️ = downloading. Tap one to search again.")
+    return "\n".join(lines), buttons
+
+
+# ---------- pause downloads ----------
+def paused():
+    try:
+        return json.load(open(PAUSE_FILE))
+    except (OSError, ValueError):
+        return None
+
+
+def qbit_torrents():
+    return json.loads(qbit("torrents/info") or "[]")
+
+
+def qbit_stop(hashes):
+    if hashes and "Not Found" in qbit("torrents/stop", "hashes=" + "|".join(hashes)):
+        qbit("torrents/pause", "hashes=" + "|".join(hashes))  # qBittorrent 4.x
+
+
+def pause_downloads(hours):
+    """Stop every running torrent and remember which, so resume only restarts those."""
+    p = paused() or {"hashes": []}
+    running = [t["hash"] for t in qbit_torrents() if not t["state"].startswith(("stopped", "paused"))]
+    qbit_stop(running)
+    p["hashes"] = sorted(set(p["hashes"]) | set(running))
+    p["until"] = time.time() + hours * 3600 if hours else 0
+    with open(PAUSE_FILE, "w") as f:
+        json.dump(p, f)
+
+
+def resume_downloads():
+    p = paused()
+    if p and p["hashes"] and "Not Found" in qbit("torrents/start", "hashes=" + "|".join(p["hashes"])):
+        qbit("torrents/resume", "hashes=" + "|".join(p["hashes"]))
+    try:
+        os.remove(PAUSE_FILE)
+    except OSError:
+        pass
+
+
+def cmd_pause(_):
+    p = paused()
+    if p:
+        until = datetime.fromtimestamp(p["until"]).strftime("%H:%M") if p.get("until") else None
+        return (f"⏸ <b>Downloads paused</b> ({len(p['hashes'])} torrents)\n"
+                + (f"Back on at {until}." if until else "Until someone taps Resume."),
+                [[("▶️ Resume now", "pz:r"), ("⏸ +1 hour", "pz:more")]])
+    info = json.loads(qbit("transfer/info") or "{}")
+    return (f"▶️ <b>Downloads running</b>\n⬇️ {info.get('dl_info_speed', 0) / 2**20:.1f} MB/s · "
+            f"⬆️ {info.get('up_info_speed', 0) / 2**20:.1f} MB/s\n\nNeed the internet for something else?",
+            [[("⏸ 1 hour", "pz:1"), ("⏸ 3 hours", "pz:3"), ("⏸ Until I resume", "pz:0")]])
+
+
+def pause_button(arg):
+    if arg == "r":
+        resume_downloads()
+        return "▶️ Downloads resumed"
+    if arg == "more":
+        p = paused()
+        if not p:
+            pause_downloads(1)
+        elif p.get("until"):
+            p["until"] = max(p["until"], time.time()) + 3600
+            with open(PAUSE_FILE, "w") as f:
+                json.dump(p, f)
+        return "⏸ Paused for another hour"
+    pause_downloads(int(arg))
+    return "⏸ Downloads paused"
+
+
+# ---------- fun ----------
+def cmd_random(arg):
+    kind = {"movie": "movie", "movies": "movie", "show": "show", "shows": "show", "tv": "show"}.get(
+        (arg or "").strip().lower()) or random.choice(["movie", "show"])
+    tok = {"X-Plex-Token": plex_token()}
+    items = []
+    for d in http_json(f"{PLEX}/library/sections", tok)["MediaContainer"]["Directory"]:
+        if d["type"] == kind:
+            items += http_json(f"{PLEX}/library/sections/{d['key']}/all?type={1 if kind == 'movie' else 2}&unwatched=1",
+                               tok, timeout=60)["MediaContainer"].get("Metadata", [])
+    buttons = [[("🎲 Another", f"rnd:{kind}"), ("🎬 Movie", "rnd:movie"), ("📺 Show", "rnd:show")]]
+    if not items:
+        return f"🎲 You've watched every {kind}!", buttons
+    m = random.choice(items)
+    genres = ", ".join(g["tag"] for g in m.get("Genre", [])[:3])
+    if kind == "movie":
+        extra = f"{int(m.get('duration', 0)) // 60000} min"
+    else:
+        extra = f"{m.get('childCount', '?')} season(s) · {int(m.get('leafCount', 0)) - int(m.get('viewedLeafCount', 0))} unwatched episodes"
+    rating = m.get("audienceRating") or m.get("rating")
+    summary = (m.get("summary") or "")[:350] + ("…" if len(m.get("summary") or "") > 350 else "")
+    year = f" ({m['year']})" if m.get("year") and f"({m['year']})" not in m["title"] else ""
+    return (f"🎲 <b>{'🎬' if kind == 'movie' else '📺'} {esc(m['title'])}</b>{year}"
+            + f"\n{extra}" + (f" · ⭐ {rating}" if rating else "") + (f"\n<i>{esc(genres)}</i>" if genres else "")
+            + (f"\n\n{esc(summary)}" if summary else "") + f"\n\n<i>One of {len(items)} unwatched.</i>"), buttons
+
+
+# ---------- Tdarr ----------
+def tdarr(collection, mode="getAll", doc=None):
+    return http_json(f"{TDARR}/cruddb", body={"data": {"collection": collection, "mode": mode,
+                                                       **({"docID": doc} if doc else {})}}, method="POST", timeout=60)
+
+
+def tdarr_numbers():
+    stats = tdarr("StatisticsJSONDB", "getById", "statistics") or {}
+    staged = tdarr("StagedJSONDB") or []
+    old = sum((s.get("originalLibraryFile") or {}).get("file_size", 0) for s in staged) * 2**20
+    new = sum((s.get("lastCompletedCacheFile") or {}).get("file_size", 0) for s in staged) * 2**20
+    return int(stats.get("totalTranscodeCount") or 0), float(stats.get("sizeDiff") or 0), len(staged), old, new
+
+
+def tdarr_text(done_today=None):
+    count, saved_gb, n_staged, old, new = tdarr_numbers()
+    lines = ["🎞 <b>Tdarr</b>", ""]
+    if done_today is not None:
+        lines.append(f"Last night: {done_today} file(s) shrunk")
+    lines.append(f"All time: {count} encoded" + (f", {saved_gb:,.0f} GB saved" if saved_gb > 0 else ""))
+    if n_staged:
+        lines.append(f"\n⏳ <b>{n_staged} waiting for approval</b>\n{gb(old)} → {gb(new)} "
+                     f"(saves {gb(old - new)}, {100 * (old - new) / max(old, 1):.0f}%)\nApprove them in Tdarr → Staging.")
+    return "\n".join(lines)
+
+
+def cmd_tdarr(_):
+    return tdarr_text()
 
 
 # ---------- background checks ----------
@@ -568,15 +848,153 @@ def check_problems():
         send("\n".join(lines), admin, buttons)
 
 
+def hours_since(iso):
+    return (datetime.now(timezone.utc) - datetime.fromisoformat(iso.replace("Z", "+00:00"))).total_seconds() / 3600
+
+
+def check_nograb():
+    """Added 1-30 days ago, still nothing on disk and nothing downloading: the search is finding nothing."""
+    queued = {(q["_app"], q.get("seriesId") or q.get("movieId")) for q in queue_items()}
+    found = []
+    for s in arr("sonarr", "/series"):
+        st = s.get("statistics", {})
+        if (s["monitored"] and st.get("episodeCount", 0) and not st.get("episodeFileCount")
+                and NOGRAB_HOURS <= hours_since(s["added"]) <= 30 * 24 and ("sonarr", s["id"]) not in queued):
+            why = " — set to <b>Daily</b> type, so it searches by date; change it to Standard in Sonarr" \
+                if s.get("seriesType") == "daily" else ""
+            found.append((f"📺 {esc(s['title'])}{why}", f"srch:s:{s['id']}", s["title"]))
+    for m in arr("radarr", "/movie"):
+        if (m["monitored"] and not m.get("hasFile") and m.get("isAvailable")
+                and NOGRAB_HOURS <= hours_since(m["added"]) <= 30 * 24 and ("radarr", m["id"]) not in queued):
+            found.append((f"🎬 {esc(m['title'])} ({m.get('year')})", f"srch:r:{m['id']}", m["title"]))
+    found = [f for f in found if not already_sent(f"nograb:{f[1]}")]
+    if not found:
+        return
+    lines = ["🔍 <b>Requested, but nothing found yet</b>", ""] + [f"• {line}" for line, _, _ in found]
+    buttons = [[(f"🔎 Search again: {title[:40]}", data)] for _, data, title in found[:25]]
+    for admin in ADMINS:
+        send("\n".join(lines), admin, buttons)
+
+
+def episode_span(eps):
+    """{(1,1),(1,2),(1,3),(2,5)} -> 'S01E01–E03, S02E05'; big batches become 'S02 (22 episodes)'."""
+    out = []
+    for season in sorted({s for s, _ in eps}):
+        nums = sorted(e for s, e in eps if s == season)
+        if len(nums) > 6:
+            out.append(f"S{season:02} ({len(nums)} episodes)")
+        elif nums == list(range(nums[0], nums[-1] + 1)) and len(nums) > 1:
+            out.append(f"S{season:02}E{nums[0]:02}–E{nums[-1]:02}")
+        else:
+            out.append(", ".join(f"S{season:02}E{n:02}" for n in nums))
+    return ", ".join(out)
+
+
+def requester_chats():
+    """('tv', tvdbId) / ('movie', tmdbId) -> Telegram chat IDs of the Seerr users who requested it
+    (only users who put their Telegram chat ID in Seerr → Profile → Notifications → Telegram)."""
+    out, chat_of = {}, {}
+    for r in seerr("/request?take=200&filter=all&sort=added")["results"]:
+        uid = (r.get("requestedBy") or {}).get("id")
+        if uid not in chat_of:
+            try:
+                chat_of[uid] = str(seerr(f"/user/{uid}/settings/notifications").get("telegramChatId") or "")
+            except Exception:
+                chat_of[uid] = ""
+        media = r.get("media") or {}
+        key = ("tv", media.get("tvdbId")) if r.get("type") == "tv" else ("movie", media.get("tmdbId"))
+        if chat_of[uid]:
+            out.setdefault(key, set()).add(chat_of[uid])
+    return out
+
+
+def check_ready():
+    """New imports since the last check, one line per show/movie, to the group (and the requester)."""
+    since = state.get("_ready_since")
+    now = time.time()
+    if not since:  # first run: start from now, don't replay history
+        return remember("ready_since", now)
+    iso = datetime.fromtimestamp(since, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    shows, movies = {}, {}
+    for r in arr("sonarr", f"/history/since?date={iso}&eventType=3&includeSeries=true&includeEpisode=true"):
+        s, e = r.get("series") or {}, r.get("episode") or {}
+        shows.setdefault(s.get("id"), {"title": s.get("title", "?"), "tvdb": s.get("tvdbId"), "eps": set()})["eps"].add(
+            (e.get("seasonNumber", 0), e.get("episodeNumber", 0)))
+    for r in arr("radarr", f"/history/since?date={iso}&eventType=3&includeMovie=true"):
+        m = r.get("movie") or {}
+        movies[m.get("id")] = m
+    remember("ready_since", now)
+    if not shows and not movies:
+        return
+    rows = [(("tv", s["tvdb"]), f"📺 <b>{esc(s['title'])}</b> — {episode_span(s['eps'])}") for s in shows.values()]
+    rows += [(("movie", m.get("tmdbId")), f"🎬 <b>{esc(m.get('title', '?'))}</b>" + (f" ({m['year']})" if m.get("year") else ""))
+             for m in movies.values()]
+    targets = [c for c in CHATS if c.startswith("-")] or list(CHATS)  # groups if any, else private chats
+    for chat in targets:
+        send("🍿 <b>Ready to watch</b>\n\n" + "\n".join(line for _, line in rows), chat)
+    try:
+        who = requester_chats()
+    except Exception:
+        traceback.print_exc()
+        return
+    personal = {}
+    for key, line in rows:
+        for chat in who.get(key, ()):
+            if chat not in targets:
+                personal.setdefault(chat, []).append(line)
+    for chat, lines in personal.items():
+        try:
+            send("🍿 <b>Your request is ready</b>\n\n" + "\n".join(lines), chat)
+        except Exception:  # they never opened a chat with the bot
+            traceback.print_exc()
+
+
+def check_tdarr():
+    """Once a day after the Tdarr schedule ends: what it did overnight. Silent if nothing happened."""
+    now = datetime.now()
+    if now.hour + now.minute / 60 < TDARR_REPORT_AT or state.get("_tdarr_day") == now.strftime("%Y-%m-%d"):
+        return
+    try:
+        count = tdarr_numbers()[0]
+    except (urllib.error.URLError, OSError):  # Tdarr not installed / not running
+        return
+    last = state.get("_tdarr_count")
+    remember("tdarr_day", now.strftime("%Y-%m-%d"))
+    remember("tdarr_count", count)
+    if last is None or count <= last:
+        return
+    for admin in ADMINS:
+        send(tdarr_text(count - last), admin, [[("🎞 Tdarr", "ref:tdarr")]])
+
+
+def check_pause():
+    p = paused()
+    if not p:
+        return
+    if p.get("until") and time.time() >= p["until"]:
+        resume_downloads()
+        for admin in ADMINS:
+            send("▶️ Downloads resumed (pause time is up).", admin)
+        return
+    # Sonarr/Radarr may have added new downloads since; keep those stopped too.
+    if any(not t["state"].startswith(("stopped", "paused")) for t in qbit_torrents()):
+        pause_downloads((p["until"] - time.time()) / 3600 if p.get("until") else 0)
+
+
 def watcher():
     time.sleep(60)
+    last = 0
     while True:
-        for check in (check_leaving, check_problems):
+        checks = [check_pause]
+        if time.time() - last >= CHECK_EVERY:
+            last = time.time()
+            checks += [check_leaving, check_problems, check_nograb, check_ready, check_tdarr]
+        for check in checks:
             try:
                 check()
             except Exception:
                 traceback.print_exc()
-        time.sleep(CHECK_EVERY)
+        time.sleep(60)
 
 
 # ---------- actions (confirm with a button, or /yes) ----------
@@ -587,6 +1005,9 @@ def confirm(desc, data, do):
 
 def restart_app(name):
     docker("POST", f"/containers/{name}/restart?t=30")
+    if name == "gluetun":  # qBittorrent lives in gluetun's network; it loses it on a gluetun restart
+        docker("POST", "/containers/qbittorrent/restart?t=30")
+        return "🔄 <b>gluetun</b> and <b>qbittorrent</b> restarted."
     return f"🔄 <b>{name}</b> restarted."
 
 
@@ -624,9 +1045,11 @@ def cmd_yes(_):
 # ---------- menu ----------
 MENU = [("status", "📊 Status"), ("downloads", "⬇️ Downloads"), ("upcoming", "📅 This week"),
         ("recent", "🆕 Recent"), ("leaving", "🗑 Leaving"), ("stuck", "🐢 Stuck"),
+        ("missing", "🔍 Missing"), ("pause", "⏸ Pause"), ("random", "🎲 Random"),
         ("disk", "💽 Disk"), ("vpn", "🛡 VPN"), ("watching", "📺 Watching"),
-        ("restart", "🔄 Restart"), ("clearstuck", "🧹 Clear stuck")]
-REFRESHABLE = {"status", "disk", "vpn", "downloads", "stuck", "recent", "leaving", "watching", "upcoming"}
+        ("tdarr", "🎞 Tdarr"), ("restart", "🔄 Restart"), ("clearstuck", "🧹 Clear stuck")]
+REFRESHABLE = {"status", "disk", "vpn", "downloads", "stuck", "recent", "leaving", "watching", "upcoming",
+               "missing", "pause", "tdarr"}
 
 
 def cmd_menu(_):
@@ -650,17 +1073,21 @@ def run(cmd, arg=""):
 COMMANDS = {"status": cmd_status, "disk": cmd_disk, "vpn": cmd_vpn, "downloads": cmd_downloads, "stuck": cmd_stuck,
             "recent": cmd_recent, "upcoming": cmd_upcoming, "leaving": cmd_leaving, "watching": cmd_watching,
             "search": cmd_search, "request": cmd_request, "restart": cmd_restart, "clearstuck": cmd_clearstuck,
-            "yes": cmd_yes, "menu": cmd_menu, "help": cmd_menu, "start": cmd_menu}
+            "missing": cmd_missing, "pause": cmd_pause, "random": cmd_random, "tdarr": cmd_tdarr,
+            "vpnnew": cmd_vpnnew, "yes": cmd_yes, "menu": cmd_menu, "help": cmd_menu, "start": cmd_menu}
 BOT_COMMANDS = [("menu", "Buttons for everything"), ("status", "Everything at a glance"),
                 ("downloads", "What's downloading"), ("upcoming", "New episodes/movies this week"),
                 ("recent", "Last 10 added"), ("leaving", "What Maintainerr removes next"),
                 ("request", "Ask for a show or movie"), ("search", "Is it in the library?"),
+                ("missing", "Aired but not downloaded"), ("pause", "Pause downloads for a while"),
+                ("random", "Pick something unwatched"), ("tdarr", "Space saved by re-encoding"),
                 ("stuck", "Downloads stuck >24h"), ("disk", "Disk space"), ("vpn", "VPN location and port"),
                 ("watching", "Who's streaming"), ("restart", "Restart one app"), ("clearstuck", "Clear stuck downloads")]
 
 
 # ---------- buttons ----------
-BUTTON_CMD = {"keep": "keep", "req": "request", "rq": "request", "fix": "fix", "rs": "restart"}
+BUTTON_CMD = {"keep": "keep", "req": "request", "rq": "request", "fix": "fix", "rs": "restart",
+              "srch": "missing", "pz": "pause", "rnd": "random"}
 
 
 def on_button(cq):
@@ -691,7 +1118,7 @@ def on_button(cq):
         cmd = BUTTON_CMD.get(kind)
     if cmd not in COMMANDS and cmd not in ("keep", "fix"):
         return toast("Unknown button.")
-    if not allowed(user, cmd):
+    if not allowed(user, cmd) and not (kind == "srch" and allowed(user, "request")):
         return toast("🔒 You don't have access to that.")
     try:
         if kind == "cmd":  # open a view as a new message
@@ -706,17 +1133,32 @@ def on_button(cq):
             toast()
             text, buttons = run("request", rest)
             return send(text, chat, buttons)
+        if kind == "rnd":
+            toast()
+            text, buttons = run("random", args[0])
+            return edit(chat, mid, text, buttons)
+        if kind == "pz":
+            toast(pause_button(args[0]))
+            text, buttons = run("pause")
+            return edit(chat, mid, f"{text}\n<i>last change by {esc(who)}</i>", buttons)
         if kind == "ok":
             pending.pop((chat, user), None)
+            toast("On it…")  # answer now: Telegram drops callback answers after ~15 s
             edit(chat, mid, "⏳ On it…")
-            result = restart_app(args[1]) if cmd == "restart" else clear_stuck()
-            toast("Done")
+            do = {"restart": lambda: restart_app(args[1]), "clearstuck": clear_stuck, "vpnnew": vpn_reconnect}[cmd]
+            try:
+                result = do()
+            except Exception as e:
+                traceback.print_exc()
+                result = f"⚠️ Failed: {esc(e)}"
             return edit(chat, mid, f"{result}\n<i>by {esc(who)}</i>")
         if cmd == "keep":
             keep(args[0])
             done = f"💚 <b>{esc(plex_title(args[0], plex_token()))}</b> will be kept <i>(by {esc(who)})</i>."
         elif cmd == "request":
             done = f"📥 Requested <b>{esc(do_request(args[0], args[1]))}</b> <i>(by {esc(who)})</i>."
+        elif kind == "srch":
+            done = f"🔎 Searching again for <b>{esc(search_again(args[0], args[1]))}</b> <i>(by {esc(who)})</i>."
         else:
             fix_download(args[0], args[1])
             done = f"🔁 Removed + blocklisted; {args[0]} is searching for another release."
