@@ -150,6 +150,7 @@ Gotchas we hit:
 - **Emergency mode on the VM's first boot with the GPU.** `nouveau` stalled boot probing the card until `/boot` timed out. Press Ctrl+D to continue, then blacklist nouveau (above).
 - **`nvidia-smi` says it can't talk to the driver.** The `--gpgpu` install skips the kernel module. Install `linux-modules-nvidia-580-server-$(uname -r)`, then `sudo modprobe nvidia`.
 - **Plex decodes on the GPU but encodes with `libx264`.** `libnvidia-encode` is missing. Install `libnvidia-encode-580-server libnvidia-decode-580-server`, then `docker restart plex`.
+- **Plex loses the GPU days later and clients buffer.** `docker exec plex nvidia-smi` says `Failed to initialize NVML: Unknown Error`, while `nvidia-smi` on the host still works. A systemd upgrade (unattended upgrades) reloaded systemd and running containers lost the GPU devices, so Plex fell back to software transcoding. `docker restart plex tdarr` fixes it until the next reload. The permanent fix is Docker's cgroupfs driver: add `"exec-opts": ["native.cgroupdriver=cgroupfs"]` to `/etc/docker/daemon.json`, then `sudo systemctl restart docker` (restarts every container). As a safety net, `scripts/gpu-check.sh` in cron (`*/10 * * * *`) restarts Plex/Tdarr when the GPU goes missing and nobody is watching.
 
 **6. Plex:** Settings → Transcoder → tick **Use hardware acceleration when available** and **Use hardware-accelerated video encoding**, then pick the GPU. While something transcodes, the Plex dashboard shows **(hw)** and `nvidia-smi` lists the `Plex Transcoder` process.
 
